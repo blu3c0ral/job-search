@@ -1,0 +1,26 @@
+name: Job Board Scan
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 3 AM ET (UTC-4)
+    - cron: "0 22 * * *"  # 6 PM ET (UTC-4)
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - run: python ats_scanners.py
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
