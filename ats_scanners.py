@@ -55,11 +55,10 @@ class JobPosting(BaseModel):
     apply_url: str = Field(default="")
 
 
-NOTION_API_KEY = os.getenv("NOTION_API_KEY")
-JD_ID = "33cff35a4319800daa26e4dc666ac458"
-LOCATIONS_ID = "33cff35a4319806385e6d0302ad1b849"
-SLUGS_ID = "33cff35a431980bdbf56e6480bc38138"
-JOB_TITLES_ID = "33cff35a43198078aa3ff0b1fb744a91"
+JD_ID = os.environ["NOTION_JD_ID"]
+LOCATIONS_ID = os.environ["NOTION_LOCATIONS_ID"]
+SLUGS_ID = os.environ["NOTION_SLUGS_ID"]
+JOB_TITLES_ID = os.environ["NOTION_JOB_TITLES_ID"]
 
 notion = Client(auth=os.environ["NOTION_TOKEN"])
 

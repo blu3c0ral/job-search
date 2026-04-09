@@ -24,3 +24,7 @@ jobs:
       - run: python ats_scanners.py
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_JD_ID: ${{ secrets.NOTION_JD_ID }}
+          NOTION_LOCATIONS_ID: ${{ secrets.NOTION_LOCATIONS_ID }}
+          NOTION_SLUGS_ID: ${{ secrets.NOTION_SLUGS_ID }}
+          NOTION_JOB_TITLES_ID: ${{ secrets.NOTION_JOB_TITLES_ID }}
