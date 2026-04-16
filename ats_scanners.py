@@ -11,11 +11,12 @@ import time
 from datetime import date
 from typing import Optional
 
-import pandas as pd
 import requests
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from supabase import create_client
 
-from notion_client import Client
+load_dotenv()
 
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
@@ -55,12 +56,10 @@ class JobPosting(BaseModel):
     apply_url: str = Field(default="")
 
 
-JD_ID = os.environ["NOTION_JD_ID"]
-LOCATIONS_ID = os.environ["NOTION_LOCATIONS_ID"]
-SLUGS_ID = os.environ["NOTION_SLUGS_ID"]
-JOB_TITLES_ID = os.environ["NOTION_JOB_TITLES_ID"]
-
-notion = Client(auth=os.environ["NOTION_TOKEN"])
+supabase = create_client(
+    os.environ["SUPABASE_URL"],
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+)
 
 # Module-level config — populated by load_config()
 _config_loaded = False
@@ -68,114 +67,53 @@ KEYWORDS: list[str] = []
 EXCLUDE_KEYWORDS: list[str] = []
 LOCATION_INCLUDE: list[str] = []
 LOCATION_EXCLUDE: list[str] = []
-SLUGS: list[str] = []
-JD: pd.DataFrame = pd.DataFrame()
+ASHBY_SLUGS: list[str] = []
+GREENHOUSE_SLUGS: list[str] = []
+LEVER_SLUGS: list[str] = []
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def universal_parser(page) -> dict:
-    """
-    A generic parser for any Notion page.
-    It iterates through properties and extracts values based on their type.
-    """
-    output = {"id": page["id"]}
-    props = page.get("properties", {})
-
-    for name, data in props.items():
-        p_type = data.get("type")
-        content = data.get(p_type)
-
-        if p_type in ["title", "rich_text"]:
-            output[name] = (
-                "".join([t["plain_text"] for t in content]) if content else ""
-            )
-        elif p_type in ["select", "status"]:
-            output[name] = content["name"] if content else None
-        elif p_type in ["url", "number", "checkbox", "email", "phone_number"]:
-            output[name] = content
-        elif p_type == "multi_select":
-            output[name] = [item["name"] for item in content]
-        elif p_type == "date":
-            output[name] = content["start"] if content else None
-
-    return output
-
-
-def fetch_notion_table(db_id) -> pd.DataFrame:
-    response = notion.databases.retrieve(database_id=db_id)
-    data_source_id = response.get("data_sources")[0].get("id")
-
-    all_results = []
-    has_more = True
-    next_cursor = None
-
-    while has_more:
-        db = notion.data_sources.query(
-            data_source_id=data_source_id,
-            start_cursor=next_cursor if next_cursor else None,
-        )
-        batch_results = db.get("results", [])
-        all_results.extend(batch_results)
-        has_more = db.get("has_more", False)
-        next_cursor = db.get("next_cursor")
-
-    return pd.DataFrame([universal_parser(page) for page in all_results])
-
-
 def load_config():
-    """Fetch filter configuration from Notion. Safe to call multiple times."""
+    """Fetch filter configuration from Supabase. Safe to call multiple times."""
     global _config_loaded, KEYWORDS, EXCLUDE_KEYWORDS
-    global LOCATION_INCLUDE, LOCATION_EXCLUDE, SLUGS, JD
+    global LOCATION_INCLUDE, LOCATION_EXCLUDE
+    global ASHBY_SLUGS, GREENHOUSE_SLUGS, LEVER_SLUGS
 
     if _config_loaded:
         return
 
-    logger.info("Fetching configuration from Notion...")
+    logger.info("Fetching configuration from Supabase...")
     t0 = time.monotonic()
 
     logger.info("  Loading job title keywords...")
-    keywords_dict = fetch_notion_table(JOB_TITLES_ID).to_dict(orient="records")
-    KEYWORDS = [
-        kw.get("Title", "").lower()
-        for kw in keywords_dict
-        if kw.get("Type") == "Whitelist"
-    ]
-    EXCLUDE_KEYWORDS = [
-        kw.get("Title", "").lower()
-        for kw in keywords_dict
-        if kw.get("Type") == "Blacklist"
-    ]
+    rows = supabase.table("job_titles").select("title, type").execute().data
+    KEYWORDS = [r["title"].lower() for r in rows if r.get("type") == "Whitelist"]
+    EXCLUDE_KEYWORDS = [r["title"].lower() for r in rows if r.get("type") == "Blacklist"]
     logger.info(
         f"    {len(KEYWORDS)} whitelist keywords, "
         f"{len(EXCLUDE_KEYWORDS)} blacklist keywords"
     )
 
     logger.info("  Loading locations...")
-    locations_dict = fetch_notion_table(LOCATIONS_ID).to_dict(orient="records")
-    LOCATION_INCLUDE = [
-        loc.get("Location", "").lower()
-        for loc in locations_dict
-        if loc.get("Type") == "Whitelist"
-    ]
-    LOCATION_EXCLUDE = [
-        loc.get("Location", "").lower()
-        for loc in locations_dict
-        if loc.get("Type") == "Blacklist"
-    ]
+    rows = supabase.table("location").select("location, type").execute().data
+    LOCATION_INCLUDE = [r["location"].lower() for r in rows if r.get("type") == "Whitelist"]
+    LOCATION_EXCLUDE = [r["location"].lower() for r in rows if r.get("type") == "Blacklist"]
     logger.info(
         f"    {len(LOCATION_INCLUDE)} included locations, "
         f"{len(LOCATION_EXCLUDE)} excluded locations"
     )
 
     logger.info("  Loading company slugs...")
-    SLUGS = fetch_notion_table(SLUGS_ID)["Slug"].tolist()
-    logger.info(f"    {len(SLUGS)} slugs")
-
-    logger.info("  Loading job descriptions...")
-    JD = fetch_notion_table(JD_ID)
-    logger.info(f"    {len(JD)} job descriptions")
+    rows = supabase.table("companies_ats_slugs").select("slug, platform").execute().data
+    ASHBY_SLUGS = [r["slug"] for r in rows if not r.get("platform") or "Ashby" in r["platform"]]
+    GREENHOUSE_SLUGS = [r["slug"] for r in rows if not r.get("platform") or "Greenhouse" in r["platform"]]
+    LEVER_SLUGS = [r["slug"] for r in rows if not r.get("platform") or "Lever" in r["platform"]]
+    logger.info(
+        f"    {len(ASHBY_SLUGS)} Ashby, {len(GREENHOUSE_SLUGS)} Greenhouse, "
+        f"{len(LEVER_SLUGS)} Lever slugs"
+    )
 
     elapsed = time.monotonic() - t0
     logger.info(f"Configuration loaded in {elapsed:.1f}s")
@@ -284,155 +222,85 @@ def _location_ok(location: str) -> bool:
     return any(included in loc for included in LOCATION_INCLUDE)
 
 
-NOTION_RICH_TEXT_LIMIT = 2000
-
-
-def _description_to_blocks(description: str, is_html: bool = False) -> list[dict]:
-    """Convert a description into Notion paragraph blocks (max 2000 chars each)."""
-    if is_html:
+def _job_to_row(job: "JobPosting") -> dict:
+    """Map a JobPosting to a job_search_main table row."""
+    description = job.description
+    if job.platform == "Greenhouse":
         description = _strip_html_tags(description)
 
-    if not description.strip():
-        return []
-
-    paragraphs = description.split("\n")
-    blocks: list[dict] = []
-    current_chunk = ""
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            if current_chunk and len(current_chunk) < NOTION_RICH_TEXT_LIMIT:
-                current_chunk += "\n"
-            continue
-
-        candidate = f"{current_chunk}\n{para}".strip() if current_chunk else para
-
-        if len(candidate) <= NOTION_RICH_TEXT_LIMIT:
-            current_chunk = candidate
-        else:
-            if current_chunk:
-                blocks.append(_make_paragraph_block(current_chunk))
-            while len(para) > NOTION_RICH_TEXT_LIMIT:
-                blocks.append(_make_paragraph_block(para[:NOTION_RICH_TEXT_LIMIT]))
-                para = para[NOTION_RICH_TEXT_LIMIT:]
-            current_chunk = para
-
-    if current_chunk.strip():
-        blocks.append(_make_paragraph_block(current_chunk))
-
-    return blocks
-
-
-def _make_paragraph_block(text: str) -> dict:
-    """Create a single Notion paragraph block."""
     return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": text}}]
-        },
+        "id": job.id,
+        "source_platform": job.platform,
+        "role_title": job.title,
+        "company": job.company,
+        "location": job.location,
+        "compensation": job.compensation or "Not listed",
+        "link": job.url or None,
+        "apply_url": job.apply_url or None,
+        "search_term_match": ", ".join(job.matched_keywords),
+        "date_found": date.today().isoformat(),
+        "status": "New",
+        "job_description": description,
     }
-
-
-def _job_to_notion_properties(job: "JobPosting") -> dict:
-    """Map a JobPosting to Notion page properties."""
-    return {
-        "Role Title": {"title": [{"text": {"content": job.title}}]},
-        "Company": {"rich_text": [{"text": {"content": job.company}}]},
-        "Location": {"rich_text": [{"text": {"content": job.location}}]},
-        "Compensation": {
-            "rich_text": [{"text": {"content": job.compensation or "Not listed"}}]
-        },
-        "Link": {"url": job.url or None},
-        "Apply URL": {"url": job.apply_url or None},
-        "Source Platform": {"rich_text": [{"text": {"content": job.platform}}]},
-        "Search Term Match": {
-            "rich_text": [{"text": {"content": ", ".join(job.matched_keywords)}}]
-        },
-        "ID": {"rich_text": [{"text": {"content": job.id}}]},
-        "Date Found": {"date": {"start": date.today().isoformat()}},
-        "Status": {"rich_text": [{"text": {"content": "New"}}]},
-    }
-
-
-def _ensure_apply_url_column():
-    """Add 'Apply URL' column to JD database if it doesn't already exist."""
-    ds_id = (
-        notion.databases.retrieve(database_id=JD_ID)
-        .get("data_sources", [{}])[0]
-        .get("id")
-    )
-    ds_schema = notion.data_sources.retrieve(data_source_id=ds_id)
-    existing_props = ds_schema.get("properties", {})
-
-    if "Apply URL" in existing_props:
-        return
-
-    logger.info("  Adding 'Apply URL' column to JD database...")
-    notion.data_sources.update(
-        data_source_id=ds_id,
-        properties={"Apply URL": {"url": {}}},
-    )
 
 
 def store_results(matches: list["JobPosting"]) -> dict:
     """
-    Store job matches to the Notion JD database.
-    Deduplicates by (Source Platform, ID) so repeated runs are safe.
+    Store job matches to the Supabase job_search_main table.
+    Deduplicates by (id, source_platform) — repeated runs are safe.
 
     Returns:
         dict with inserted and skipped counts.
     """
-    logger.info("Storing results to Notion JD database...")
+    logger.info("Storing results to Supabase...")
     t0 = time.monotonic()
 
-    _ensure_apply_url_column()
+    if not matches:
+        logger.info("  Nothing to insert.")
+        return {"inserted": 0, "skipped": 0}
 
-    logger.info("  Loading existing jobs for deduplication...")
-    existing_df = fetch_notion_table(JD_ID)
-    existing_keys: set[tuple[str, str]] = set()
-    if not existing_df.empty and "Source Platform" in existing_df.columns and "ID" in existing_df.columns:
-        for _, row in existing_df.iterrows():
-            platform = str(row.get("Source Platform", "")).strip()
-            job_id = str(row.get("ID", "")).strip()
-            if platform and job_id:
-                existing_keys.add((platform, job_id))
+    logger.info("  Loading existing job keys for deduplication...")
+    existing = (
+        supabase.table("job_search_main")
+        .select("id, source_platform")
+        .execute()
+        .data
+    )
+    existing_keys: set[tuple[str, str]] = {
+        (r["source_platform"], r["id"]) for r in existing
+    }
     logger.info(f"    {len(existing_keys)} existing jobs found")
 
-    new_jobs = [
-        m for m in matches if (m.platform, m.id) not in existing_keys
-    ]
+    new_jobs = [m for m in matches if (m.platform, m.id) not in existing_keys]
     skipped = len(matches) - len(new_jobs)
-    logger.info(
-        f"    {len(new_jobs)} new jobs to insert, {skipped} duplicates skipped"
-    )
+    logger.info(f"    {len(new_jobs)} new jobs to insert, {skipped} duplicates skipped")
 
     if not new_jobs:
         logger.info("  Nothing to insert.")
         return {"inserted": 0, "skipped": skipped}
 
+    rows = [_job_to_row(j) for j in new_jobs]
+
     inserted = 0
-    for i, job in enumerate(new_jobs, 1):
+    batch_size = 50
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
         try:
-            is_html = job.platform == "Greenhouse"
-            children = _description_to_blocks(job.description, is_html=is_html)
-            properties = _job_to_notion_properties(job)
-
-            notion.pages.create(
-                parent={"database_id": JD_ID},
-                properties=properties,
-                children=children,
-            )
-            inserted += 1
-
-            if i % 10 == 0 or i == len(new_jobs):
-                logger.info(f"    Inserted {i}/{len(new_jobs)} jobs...")
-
+            supabase.table("job_search_main").insert(batch).execute()
+            inserted += len(batch)
+            logger.info(f"    Inserted {min(i + batch_size, len(rows))}/{len(rows)} jobs...")
         except Exception as exc:
-            logger.error(
-                f"  Failed to insert '{job.title}' ({job.platform}/{job.id}): {exc}"
-            )
+            logger.error(f"  Batch insert failed (rows {i}–{i + len(batch)}): {exc}")
+            # fall back to row-by-row so one bad row doesn't block the rest
+            for row in batch:
+                try:
+                    supabase.table("job_search_main").insert(row).execute()
+                    inserted += 1
+                except Exception as row_exc:
+                    logger.error(
+                        f"  Failed to insert '{row.get('role_title')}' "
+                        f"({row.get('source_platform')}/{row.get('id')}): {row_exc}"
+                    )
 
     elapsed = time.monotonic() - t0
     logger.info(
@@ -451,7 +319,7 @@ def scan_ashby(slugs: Optional[list[str]] = None, timeout: int = 5) -> dict:
     Scan Ashby job boards for all given company slugs.
 
     Args:
-        slugs:   List of company slugs to scan. Defaults to SLUGS.
+        slugs:   List of company slugs to scan. Defaults to ASHBY_SLUGS.
         timeout: Request timeout in seconds per slug.
 
     Returns:
@@ -461,7 +329,7 @@ def scan_ashby(slugs: Optional[list[str]] = None, timeout: int = 5) -> dict:
             errors   — list of slugs that failed
     """
     load_config()
-    slugs = slugs or SLUGS
+    slugs = slugs or ASHBY_SLUGS
     matches: list[JobPosting] = []
     errors = []
 
@@ -543,7 +411,7 @@ def scan_greenhouse(slugs: Optional[list[str]] = None, timeout: int = 5) -> dict
     (only when matches are found).
 
     Args:
-        slugs:   List of company slugs to scan. Defaults to SLUGS.
+        slugs:   List of company slugs to scan. Defaults to GREENHOUSE_SLUGS.
         timeout: Request timeout in seconds per slug.
 
     Returns:
@@ -553,7 +421,7 @@ def scan_greenhouse(slugs: Optional[list[str]] = None, timeout: int = 5) -> dict
             errors   — list of slugs that failed
     """
     load_config()
-    slugs = slugs or SLUGS
+    slugs = slugs or GREENHOUSE_SLUGS
     matches: list[JobPosting] = []
     errors = []
 
@@ -644,7 +512,7 @@ def scan_lever(slugs: Optional[list[str]] = None, timeout: int = 15) -> dict:
     is notably slower than Ashby/Greenhouse and benefits from pooling.
 
     Args:
-        slugs:   List of company slugs to scan. Defaults to SLUGS.
+        slugs:   List of company slugs to scan. Defaults to LEVER_SLUGS.
         timeout: Request timeout in seconds per slug (default 15 for Lever).
 
     Returns:
@@ -654,7 +522,7 @@ def scan_lever(slugs: Optional[list[str]] = None, timeout: int = 15) -> dict:
             errors   — list of slugs that failed
     """
     load_config()
-    slugs = slugs or SLUGS
+    slugs = slugs or LEVER_SLUGS
     matches: list[JobPosting] = []
     errors = []
 
@@ -815,6 +683,6 @@ if __name__ == "__main__":
     storage = store_results(results["matches"])
     print(f"\n{'='*50}")
     print(
-        f"Notion storage: {storage['inserted']} inserted, "
+        f"Supabase storage: {storage['inserted']} inserted, "
         f"{storage['skipped']} duplicates skipped"
     )

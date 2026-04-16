@@ -1,4 +1,4 @@
-notion-client==3.0.0
-pandas==3.0.2
 pydantic==2.12.5
+python-dotenv==1.1.0
 requests==2.33.1
+supabase==2.15.2
