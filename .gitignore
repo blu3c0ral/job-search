@@ -20,6 +20,7 @@ job_objects.json
 jds_samples.json
 jd_texts.py
 results.json
+supabase_schema_table.sql
 
 # OS
 .DS_Store
