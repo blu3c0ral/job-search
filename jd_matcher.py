@@ -126,8 +126,15 @@ Job Description:
 Evaluate this JD against the profile and respond with a JSON object only."""
 
 
-def load_profile(profile_path: str) -> str:
-    """Load the candidate matching profile."""
+def load_profile(profile_path: str | None) -> str:
+    """Load the candidate matching profile from PROFILE_YAML env var or a file."""
+    import os
+    env_profile = os.environ.get("PROFILE_YAML")
+    if env_profile:
+        return env_profile
+    if profile_path is None:
+        print("Error: provide --profile or set PROFILE_YAML env var", file=sys.stderr)
+        sys.exit(1)
     path = Path(profile_path)
     if not path.exists():
         print(f"Error: Profile file not found: {profile_path}", file=sys.stderr)
@@ -285,8 +292,9 @@ def main():
     )
     parser.add_argument(
         "--profile",
-        required=True,
-        help="Path to the candidate matching profile (YAML or text)",
+        required=False,
+        default=None,
+        help="Path to the candidate matching profile (YAML or text). Can also set PROFILE_YAML env var.",
     )
     parser.add_argument(
         "--jds",

@@ -25,3 +25,7 @@ supabase_schema_table.sql
 # OS
 .DS_Store
 Thumbs.db
+
+# Sensitive profile (stored in GitHub Secrets for CI)
+profile.yaml
+.git-crypt/
