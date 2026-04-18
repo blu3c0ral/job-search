@@ -425,20 +425,25 @@ def generate_search_queries(
     """Use Claude to generate diverse web search queries."""
     logger.info("Generating search queries with Claude...")
 
+    current_year = date.today().year
+    current_month = date.today().strftime("%B %Y")
+
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=1024,
-        system="""You are a job search assistant. Generate web search queries to find job postings.
+        system=f"""You are a job search assistant. Generate web search queries to find RECENTLY POSTED job openings.
+
+Today is {current_month}. It is critical that queries are designed to surface fresh, active listings.
 
 Rules:
 - Generate exactly 7 search queries
-- Each query should find SPECIFIC job postings (not career advice or articles)
+- Each query should find SPECIFIC, RECENTLY PUBLISHED job postings (not career advice or articles)
+- Bias heavily toward recency: include "{current_year}" in most queries, and consider terms like "now hiring", "open role", "actively hiring"
 - Mix approaches:
   - 2 queries targeting ATS platforms: include "site:jobs.ashbyhq.com" OR "site:boards.greenhouse.io" OR "site:jobs.lever.co"
   - 3 general queries combining job titles with locations or "remote"
   - 2 queries targeting specific industries or interests from the profile
 - Use natural search language
-- Add "hiring" or "job" or "careers" to general queries to bias toward listings
 - Vary the job title phrasing across queries for diversity
 
 Respond with a JSON array of 7 query strings. Nothing else.""",
@@ -711,7 +716,7 @@ def run_web_search() -> dict:
 
     if not new_results:
         logger.info("Nothing new to process.")
-        return {"total_found": 0, "stored": 0, "slugs_discovered": 0}
+        return {"total_found": 0, "stored": 0, "slugs_discovered": 0, "queries": queries}
 
     # ── Phase 5: Claude triage ────────────────────────────────────────────────
     logger.info("=" * 60)
@@ -721,7 +726,7 @@ def run_web_search() -> dict:
 
     if not triaged:
         logger.info("No results passed triage.")
-        return {"total_found": 0, "stored": 0, "slugs_discovered": 0}
+        return {"total_found": 0, "stored": 0, "slugs_discovered": 0, "queries": queries}
 
     triaged_results = []
     for t in triaged:
@@ -800,6 +805,7 @@ def run_web_search() -> dict:
             "total_found": 0,
             "stored": 0,
             "slugs_discovered": slug_result["new_slugs"],
+            "queries": queries,
         }
 
     # ── Phase 8: Store results ────────────────────────────────────────────────
@@ -869,6 +875,7 @@ def run_web_search() -> dict:
         "total_found": len(evaluated),
         "stored": storage["inserted"],
         "slugs_discovered": slug_result["new_slugs"],
+        "queries": queries,
     }
 
 
@@ -882,3 +889,7 @@ if __name__ == "__main__":
     print(f"  Jobs stored:   {result['stored']}")
     print(f"  New ATS slugs: {result['slugs_discovered']}")
     print(f"{'='*50}")
+    print(f"\nSearch queries used:")
+    for i, q in enumerate(result.get("queries", []), 1):
+        print(f"  {i}. {q}")
+    print()
