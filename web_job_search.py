@@ -119,9 +119,11 @@ def load_profile() -> str:
     """Load candidate profile from PROFILE_YAML env var or profile.yaml file."""
     profile = os.environ.get("PROFILE_YAML")
     if profile:
+        logger.info("Profile loaded from PROFILE_YAML env var")
         return profile
     path = Path("profile.yaml")
     if path.exists():
+        logger.info(f"Profile loaded from {path.resolve()}")
         return path.read_text()
     logger.error("No profile found: set PROFILE_YAML env var or provide profile.yaml")
     sys.exit(1)
@@ -225,6 +227,7 @@ def fetch_ats_description(
     platform: str, slug: str, job_id: str | None
 ) -> dict | None:
     """Fetch job data from ATS public API. Returns dict with job fields or None."""
+    logger.info(f"    [ATS API] {platform}/{slug} (job_id={job_id})")
     try:
         if platform == "Ashby":
             resp = _get_with_retry(
@@ -238,8 +241,11 @@ def fetch_ats_description(
             job = None
             if job_id:
                 job = next((j for j in jobs if j.get("id") == job_id), None)
-            if not job and jobs:
-                job = jobs[0]
+                if not job:
+                    logger.info(f"    [ATS API] Job {job_id} not found in Ashby/{slug} — likely expired")
+                    return None
+            elif jobs:
+                job = jobs[0]  # no job_id in URL — take first as best guess
             if not job:
                 return None
             return {
@@ -270,8 +276,11 @@ def fetch_ats_description(
                 job = next(
                     (j for j in jobs if str(j.get("id")) == str(job_id)), None
                 )
-            if not job and jobs:
-                job = jobs[0]
+                if not job:
+                    logger.info(f"    [ATS API] Job {job_id} not found in Greenhouse/{slug} — likely expired")
+                    return None
+            elif jobs:
+                job = jobs[0]  # no job_id in URL — take first as best guess
             if not job:
                 return None
             # Resolve company name
@@ -309,8 +318,11 @@ def fetch_ats_description(
             job = None
             if job_id:
                 job = next((j for j in jobs if j.get("id") == job_id), None)
-            if not job and jobs:
-                job = jobs[0]
+                if not job:
+                    logger.info(f"    [ATS API] Job {job_id} not found in Lever/{slug} — likely expired")
+                    return None
+            elif jobs:
+                job = jobs[0]  # no job_id in URL — take first as best guess
             if not job:
                 return None
             return {
@@ -333,6 +345,7 @@ def fetch_ats_description(
 
 def fetch_jina_description(url: str) -> str | None:
     """Fetch rendered page content via Jina Reader API. Returns clean text."""
+    logger.info(f"    [Jina Reader] {url[:80]}")
     try:
         resp = requests.get(
             JINA_READER_URL.format(url=url),
@@ -340,15 +353,16 @@ def fetch_jina_description(url: str) -> str | None:
             timeout=15,
         )
         if resp.status_code != 200:
-            logger.debug(f"  Jina returned HTTP {resp.status_code} for {url[:60]}")
+            logger.warning(f"    [Jina Reader] HTTP {resp.status_code}")
             return None
         text = resp.text.strip()
         if len(text) < 100:
-            logger.debug(f"  Jina returned too little content for {url[:60]}")
+            logger.warning(f"    [Jina Reader] Too little content ({len(text)} chars)")
             return None
+        logger.info(f"    [Jina Reader] OK — {len(text):,} chars")
         return text[:20000]
     except Exception as exc:
-        logger.debug(f"  Jina failed for {url[:60]}: {exc}")
+        logger.warning(f"    [Jina Reader] Failed: {exc}")
         return None
 
 
@@ -371,15 +385,18 @@ def fetch_description(classified: ClassifiedUrl) -> tuple[str, dict]:
             desc = ats_data.pop("description", "")
             metadata = ats_data
             if desc:
+                logger.info(f"    [Source] ATS API — {len(desc):,} chars")
                 return desc, metadata
+            logger.info("    [Source] ATS API returned metadata but no description, trying Jina")
 
     # Jina Reader for any URL
     jina_text = fetch_jina_description(classified.url)
     if jina_text:
+        logger.info(f"    [Source] Jina Reader — {len(jina_text):,} chars")
         return jina_text, metadata
 
     # Fallback to Brave snippet
-    logger.debug(f"  Using Brave snippet fallback for {classified.url[:60]}")
+    logger.warning(f"    [Source] Brave snippet fallback — {len(classified.snippet):,} chars")
     return classified.snippet, metadata
 
 
@@ -644,95 +661,115 @@ def run_web_search() -> dict:
     """Main orchestration function."""
     t0 = time.monotonic()
 
-    # 1. Load inputs
+    # ── Phase 1: Load inputs ──────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("PHASE 1 — Loading profile and config")
+    logger.info("=" * 60)
     profile = load_profile()
     config = load_search_config()
     brave_api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
     if not brave_api_key:
         logger.error("BRAVE_SEARCH_API_KEY environment variable is not set")
         sys.exit(1)
-
     client = anthropic.Anthropic()
 
-    # 2. Generate search queries
+    # ── Phase 2: Generate search queries ─────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("PHASE 2 — Generating search queries")
+    logger.info("=" * 60)
     queries = generate_search_queries(
         client, profile, config["titles"], config["locations"]
     )
 
-    # 3. Execute Brave searches
+    # ── Phase 3: Execute Brave searches ──────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info(f"PHASE 3 — Brave search ({len(queries)} queries)")
+    logger.info("=" * 60)
     all_results: list[BraveSearchResult] = []
     for i, query in enumerate(queries, 1):
-        logger.info(f"  Searching [{i}/{len(queries)}]: {query[:60]}...")
+        logger.info(f"  [{i}/{len(queries)}] {query}")
         results = brave_search(query, brave_api_key)
         all_results.extend(results)
         logger.info(f"    -> {len(results)} results")
         if i < len(queries):
             time.sleep(1.5)
-
     logger.info(f"Total raw results: {len(all_results)}")
 
-    # 4. Deduplicate
+    # ── Phase 4: Deduplicate & filter ─────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("PHASE 4 — Deduplication and filtering")
+    logger.info("=" * 60)
     unique_results = deduplicate_results(all_results)
-    logger.info(f"After deduplication: {len(unique_results)}")
+    logger.info(f"After deduplication: {len(unique_results)} (removed {len(all_results) - len(unique_results)} dupes)")
 
-    # 5. Filter out already-stored URLs
     existing_urls = get_existing_urls()
     new_results = [r for r in unique_results if r.url not in existing_urls]
     logger.info(
-        f"After filtering existing: {len(new_results)} "
-        f"(skipped {len(unique_results) - len(new_results)})"
+        f"After filtering existing: {len(new_results)} new "
+        f"({len(unique_results) - len(new_results)} already in Supabase)"
     )
 
     if not new_results:
-        logger.info("No new results to process.")
+        logger.info("Nothing new to process.")
         return {"total_found": 0, "stored": 0, "slugs_discovered": 0}
 
-    # 6. Claude triage
+    # ── Phase 5: Claude triage ────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info(f"PHASE 5 — Claude triage ({len(new_results)} candidates)")
+    logger.info("=" * 60)
     triaged = triage_search_results(client, profile, new_results)
 
     if not triaged:
         logger.info("No results passed triage.")
         return {"total_found": 0, "stored": 0, "slugs_discovered": 0}
 
-    # Map triaged indices back to BraveSearchResult
     triaged_results = []
     for t in triaged:
         idx = t.get("index")
         if idx is not None and 0 <= idx < len(new_results):
             triaged_results.append(new_results[idx])
+        else:
+            logger.warning(f"  Triage returned out-of-range index: {idx}")
 
-    logger.info(f"Processing {len(triaged_results)} triaged candidates")
+    logger.info(f"Triaged to {len(triaged_results)} candidates:")
+    for r in triaged_results:
+        classified_preview = classify_url(r)
+        ats_tag = f" [{classified_preview.ats_platform}]" if classified_preview.ats_platform else " [Web]"
+        logger.info(f"  {ats_tag} {r.title[:60]} — {r.url[:70]}")
 
-    # 7. Classify URLs
+    # ── Phase 6: Classify URLs ────────────────────────────────────────────────
     classified = [classify_url(r) for r in triaged_results]
 
-    # 8. Fetch descriptions and evaluate
+    # ── Phase 7: Fetch descriptions and evaluate ──────────────────────────────
+    logger.info("=" * 60)
+    logger.info(f"PHASE 6 — Fetch descriptions & evaluate ({len(classified)} jobs)")
+    logger.info("=" * 60)
     evaluated = []
     for i, c in enumerate(classified, 1):
-        logger.info(f"  Processing [{i}/{len(classified)}]: {c.url[:70]}...")
+        logger.info(f"  [{i}/{len(classified)}] {c.title[:60]}")
+        logger.info(f"    URL: {c.url[:80]}")
 
-        # Fetch description
         description, metadata = fetch_description(c)
         if not description or len(description) < 50:
-            logger.info(f"    -> Skipped (no useful description)")
+            logger.info("    -> Skipped (no useful description)")
             continue
 
-        # Rate limit Jina calls
         if not c.ats_platform:
             time.sleep(3)
 
-        # Evaluate with Claude
         evaluation = evaluate_job_relevance(
             client, profile, c.url, c.query, description
         )
         if not evaluation:
+            logger.warning("    -> Evaluation failed, skipping")
             continue
         if not evaluation.get("is_real_posting", False):
-            logger.info(f"    -> Not a real posting")
+            logger.info("    -> Not a real posting, skipping")
             continue
         if not evaluation.get("relevant", False):
             logger.info(
-                f"    -> Not relevant (score: {evaluation.get('score', '?')})"
+                f"    -> Not relevant (score {evaluation.get('score', '?')}/5): "
+                f"{evaluation.get('reason', '')}"
             )
             continue
 
@@ -745,9 +782,11 @@ def run_web_search() -> dict:
             }
         )
         logger.info(
-            f"    -> Score: {evaluation.get('score', '?')}/5 | "
-            f"{evaluation.get('extracted_company', '?')} | "
-            f"{evaluation.get('extracted_title', '?')}"
+            f"    -> MATCH score={evaluation.get('score', '?')}/5 | "
+            f"{evaluation.get('extracted_company', '?')} — "
+            f"{evaluation.get('extracted_title', '?')} | "
+            f"{evaluation.get('extracted_location', '?')} | "
+            f"comp: {evaluation.get('extracted_compensation', '?')}"
         )
 
     logger.info(f"Relevant jobs found: {len(evaluated)}")
@@ -763,11 +802,22 @@ def run_web_search() -> dict:
             "slugs_discovered": slug_result["new_slugs"],
         }
 
-    # 9. Sort by score, take top 10
+    # ── Phase 8: Store results ────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("PHASE 7 — Store results")
+    logger.info("=" * 60)
+
     evaluated.sort(key=lambda x: x["evaluation"].get("score", 0), reverse=True)
     top_jobs = evaluated[:10]
+    logger.info(f"Top {len(top_jobs)} jobs to store (by score):")
+    for item in top_jobs:
+        ev = item["evaluation"]
+        logger.info(
+            f"  score={ev.get('score')}/5 | {ev.get('extracted_company')} — "
+            f"{ev.get('extracted_title')} | {ev.get('extracted_location')}"
+        )
 
-    # 10. Convert to JobPosting models
+    # Convert to JobPosting models
     job_postings = []
     for item in top_jobs:
         c = item["classified"]
