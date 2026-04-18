@@ -425,20 +425,19 @@ def generate_search_queries(
     """Use Claude to generate diverse web search queries."""
     logger.info("Generating search queries with Claude...")
 
-    current_year = date.today().year
-    current_month = date.today().strftime("%B %Y")
+    today = date.today().strftime("%B %d, %Y")
 
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=1024,
         system=f"""You are a job search assistant. Generate web search queries to find RECENTLY POSTED job openings.
 
-Today is {current_month}. It is critical that queries are designed to surface fresh, active listings.
+Today is {today}. It is critical that queries are designed to surface fresh, active listings.
 
 Rules:
 - Generate exactly 7 search queries
 - Each query should find SPECIFIC, RECENTLY PUBLISHED job postings (not career advice or articles)
-- Bias heavily toward recency: include "{current_year}" in most queries, and consider terms like "now hiring", "open role", "actively hiring"
+- Bias heavily toward recency: include "2026" in most queries, and consider terms like "now hiring", "open role", "actively hiring"
 - Mix approaches:
   - 2 queries targeting ATS platforms: include "site:jobs.ashbyhq.com" OR "site:boards.greenhouse.io" OR "site:jobs.lever.co"
   - 3 general queries combining job titles with locations or "remote"
