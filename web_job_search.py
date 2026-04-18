@@ -434,14 +434,20 @@ def generate_search_queries(
 
 Today is {today}. It is critical that queries are designed to surface fresh, active listings.
 
+IMPORTANT: A separate system already scans Ashby, Greenhouse, and Lever ATS platforms thoroughly.
+Your goal is to find jobs OUTSIDE those platforms — on company career pages, Workday, iCIMS,
+SmartRecruiters, and other non-ATS sources. Prioritize mid-size and large companies that host
+their own career sites.
+
 Rules:
 - Generate exactly 7 search queries
 - Each query should find SPECIFIC, RECENTLY PUBLISHED job postings (not career advice or articles)
 - Bias heavily toward recency: include "2026" in most queries, and consider terms like "now hiring", "open role", "actively hiring"
 - Mix approaches:
-  - 2 queries targeting ATS platforms: include "site:jobs.ashbyhq.com" OR "site:boards.greenhouse.io" OR "site:jobs.lever.co"
-  - 3 general queries combining job titles with locations or "remote"
-  - 2 queries targeting specific industries or interests from the profile
+  - 1 query targeting ATS platforms: include "site:jobs.ashbyhq.com" OR "site:boards.greenhouse.io" OR "site:jobs.lever.co" (just one — ATS is already well-covered)
+  - 3 queries targeting company career pages directly — include terms like "careers" or "jobs" with company types/industries from the profile. Use "-site:jobs.ashbyhq.com -site:boards.greenhouse.io -site:jobs.lever.co" to EXCLUDE ATS results
+  - 2 general queries combining job titles with locations or "remote"
+  - 1 query targeting a specific industry or niche interest from the profile
 - Use natural search language
 - Vary the job title phrasing across queries for diversity
 
@@ -490,8 +496,8 @@ def triage_search_results(
         system=f"""You are a job posting classifier. Given web search results, identify which are actual, specific job postings.
 
 Include:
-- Direct links to specific job postings on ATS platforms (Ashby, Greenhouse, Lever, Workday, etc.)
-- Direct links to specific roles on company career pages
+- Direct links to specific job postings on company career pages (prioritize these!)
+- Direct links to specific roles on ATS platforms (Ashby, Greenhouse, Lever, Workday, etc.)
 - Specific job listings on aggregators (LinkedIn, Indeed) IF they link to a distinct role
 
 Exclude:
@@ -499,6 +505,8 @@ Exclude:
 - Generic "careers" landing pages without a specific role
 - Search result pages from aggregators (e.g., indeed.com/jobs?q=...)
 - Duplicate listings (same job at same company — keep the most direct link)
+
+IMPORTANT: Aim for diversity in sources. A separate system already scans Ashby, Greenhouse, and Lever thoroughly. Prioritize non-ATS results (company career pages, Workday, etc.) when available. Include ATS results too, but ensure at least half the selections come from non-ATS sources if possible.
 
 Prefer direct company/ATS URLs over aggregator URLs when the same job appears in both.
 
