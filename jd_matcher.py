@@ -31,7 +31,23 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-from jd_texts import JD_TEXTS
+
+import logging
+logger = logging.getLogger("jd_matcher")
+
+# Lazy Supabase client — only initialized when DB functions are used
+_supabase_client = None
+
+
+def get_supabase_client():
+    global _supabase_client
+    if _supabase_client is None:
+        import os
+        from supabase import create_client
+        url = os.environ["SUPABASE_URL"]
+        key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+        _supabase_client = create_client(url, key)
+    return _supabase_client
 
 # ============================================================
 # MATCHING PROMPT (from jd_matching_prompt.md)
@@ -144,6 +160,7 @@ def load_profile(profile_path: str | None) -> str:
 
 def load_jds(jds_path: str) -> list[dict]:
     """Load the list of JDs to evaluate."""
+    from jd_texts import JD_TEXTS
     path = Path(jds_path)
     jd_texts = JD_TEXTS
     if not path.exists():
@@ -175,16 +192,34 @@ def evaluate_jd(client: anthropic.Anthropic, profile: str, jd: dict) -> dict:
         jd_text=jd["jd_text"],
     )
 
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=4000,  # enough for thinking + JSON output
-        thinking={"type": "adaptive"},  # model decides when/how much to think per task
-        output_config={
-            "effort": "medium"  # default, but explicit — deep reasoning for matching decisions
-        },
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
-    )
+    # Retry on 429 rate limit errors with exponential backoff (30s, 60s, 120s)
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=4000,  # enough for thinking + JSON output
+                thinking={"type": "adaptive"},  # model decides when/how much to think per task
+                output_config={
+                    "effort": "medium"  # default, but explicit — deep reasoning for matching decisions
+                },
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            break  # success — exit retry loop
+        except anthropic.RateLimitError:
+            if attempt >= max_retries:
+                logger.error(
+                    f"evaluate_jd: rate limited after {max_retries} retries for "
+                    f"{jd['company']} — {jd['title']}, giving up"
+                )
+                raise
+            wait = 30 * (2 ** attempt)  # 30s, 60s, 120s
+            logger.warning(
+                f"evaluate_jd: rate limited (attempt {attempt + 1}/{max_retries}), "
+                f"waiting {wait}s before retry..."
+            )
+            time.sleep(wait)
 
     # With adaptive thinking, response may contain thinking blocks + text blocks.
     # We want only the text block (the JSON output).
@@ -210,6 +245,125 @@ def evaluate_jd(client: anthropic.Anthropic, profile: str, jd: dict) -> dict:
     result["company"] = jd["company"]
     result["title"] = jd["title"]
     return result
+
+
+_VERDICT_TO_ENUM = {
+    "strong apply": "Excelent Match",
+    "apply": "Good Match",
+    "borderline": "Relevant",
+    "skip": "Less Relevant",
+    "hard no": "Not Relevant",
+}
+
+
+def verdict_to_enum(verdict: str) -> str:
+    """Map a jd_matcher verdict to the JobMatchEnum value used in Supabase."""
+    return _VERDICT_TO_ENUM.get(verdict.lower(), "Relevant")
+
+
+def evaluate_and_store(
+    job_id: str,
+    platform: str,
+    *,
+    profile: str | None = None,
+    anthropic_client: anthropic.Anthropic | None = None,
+) -> dict:
+    """
+    Fetch a job from Supabase, evaluate it, and write match results back.
+
+    Args:
+        job_id:           The `id` column value.
+        platform:         The `source_platform` column value.
+        profile:          Candidate profile text. Loads from PROFILE_YAML env var if omitted.
+        anthropic_client: Reuse an existing Anthropic client, or one is created automatically.
+
+    Returns:
+        The full evaluation result dict (same shape as evaluate_jd()).
+    """
+    db = get_supabase_client()
+
+    logger.info(f"Fetching job id={job_id!r} platform={platform!r} from Supabase...")
+    row = (
+        db.table("job_search_main")
+        .select("id, source_platform, role_title, company, job_description")
+        .eq("id", job_id)
+        .eq("source_platform", platform)
+        .single()
+        .execute()
+        .data
+    )
+    if not row:
+        raise ValueError(f"Job not found: id={job_id!r} platform={platform!r}")
+
+    logger.info(f"  Found: {row['company']} — {row['role_title']}")
+    jd_text = row.get("job_description") or ""
+    if not jd_text:
+        logger.warning("  job_description is empty — evaluation will be low quality")
+
+    jd = {
+        "title": row["role_title"],
+        "company": row["company"],
+        "jd_text": jd_text,
+    }
+
+    if profile is None:
+        profile = load_profile(None)
+
+    if anthropic_client is None:
+        anthropic_client = anthropic.Anthropic()
+
+    logger.info("  Evaluating with Claude...")
+    result = evaluate_jd(anthropic_client, profile, jd)
+
+    match_enum = verdict_to_enum(result.get("verdict", ""))
+    match_detail = {k: result[k] for k in result if k not in ("company", "title")}
+
+    logger.info(
+        f"  Result: {match_enum} (score {result.get('score', '?')}/10, "
+        f"verdict: {result.get('verdict', '?')})"
+    )
+    logger.info("  Writing match + match_detail to Supabase...")
+    db.table("job_search_main").update(
+        {"match": match_enum, "match_detail": match_detail}
+    ).eq("id", job_id).eq("source_platform", platform).execute()
+    logger.info("  Done.")
+
+    return result
+
+
+def evaluate_match(
+    title: str,
+    company: str,
+    jd_text: str,
+    *,
+    profile: str | None = None,
+    anthropic_client: anthropic.Anthropic | None = None,
+) -> dict:
+    """
+    Evaluate a JD and return match fields ready for DB storage.
+
+    Use this when you already have the JD text (e.g. during scanning pipelines).
+
+    Returns:
+        {"match": <JobMatchEnum string>, "match_detail": <dict>}
+    """
+    if profile is None:
+        profile = load_profile(None)
+    if anthropic_client is None:
+        anthropic_client = anthropic.Anthropic()
+
+    logger.debug(f"evaluate_match: {company} — {title} ({len(jd_text)} chars)")
+    jd = {"title": title, "company": company, "jd_text": jd_text}
+    result = evaluate_jd(anthropic_client, profile, jd)
+
+    match_enum = verdict_to_enum(result.get("verdict", ""))
+    match_detail = {k: result[k] for k in result if k not in ("company", "title")}
+
+    logger.debug(
+        f"evaluate_match result: {match_enum} "
+        f"(score {result.get('score', '?')}/10)"
+    )
+    return {"match": match_enum, "match_detail": match_detail}
 
 
 def verdict_emoji(verdict: str) -> str:
@@ -298,8 +452,19 @@ def main():
     )
     parser.add_argument(
         "--jds",
-        required=True,
+        required=False,
+        default=None,
         help="Path to JDs JSON file (array of {title, company, jd_text})",
+    )
+    parser.add_argument(
+        "--db-id",
+        default=None,
+        help="Evaluate a single job from Supabase by its id column value",
+    )
+    parser.add_argument(
+        "--db-platform",
+        default=None,
+        help="source_platform value to pair with --db-id",
     )
     parser.add_argument(
         "--output",
@@ -313,6 +478,28 @@ def main():
         help="Seconds between API calls (default: 0.5)",
     )
     args = parser.parse_args()
+
+    # --- DB single-job mode ---
+    if args.db_id or args.db_platform:
+        if not (args.db_id and args.db_platform):
+            print("Error: --db-id and --db-platform must be used together", file=sys.stderr)
+            sys.exit(1)
+        profile = load_profile(args.profile)
+        print(f"\nEvaluating id={args.db_id!r} platform={args.db_platform!r} ...")
+        try:
+            result = evaluate_and_store(args.db_id, args.db_platform, profile=profile)
+            print(f"  score: {result.get('score', '?')}/10  verdict: {result.get('verdict', '?')}")
+            print(f"  match enum: {verdict_to_enum(result.get('verdict', ''))}")
+            print(f"\n  Bottom line: {result.get('bottom_line', '')}")
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # --- File-based batch mode ---
+    if not args.jds:
+        print("Error: provide --jds <file> or use --db-id / --db-platform", file=sys.stderr)
+        sys.exit(1)
 
     profile = load_profile(args.profile)
     jds = load_jds(args.jds)

@@ -9,6 +9,7 @@ import os
 import re
 import time
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -244,10 +245,19 @@ def _job_to_row(job: "JobPosting") -> dict:
     }
 
 
-def store_results(matches: list["JobPosting"]) -> dict:
+def store_results(
+    matches: list["JobPosting"],
+    *,
+    profile: str | None = None,
+    anthropic_client=None,
+) -> dict:
     """
     Store job matches to the Supabase job_search_main table.
     Deduplicates by (id, source_platform) — repeated runs are safe.
+
+    When ``profile`` is provided, each job is evaluated against the candidate
+    profile via jd_matcher and the ``match`` / ``match_detail`` columns are
+    populated on insert.
 
     Returns:
         dict with inserted and skipped counts.
@@ -280,6 +290,60 @@ def store_results(matches: list["JobPosting"]) -> dict:
         return {"inserted": 0, "skipped": skipped}
 
     rows = [_job_to_row(j) for j in new_jobs]
+
+    # Evaluate match quality when profile is available
+    if profile is not None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from jd_matcher import evaluate_match
+
+        if anthropic_client is None:
+            import anthropic
+            anthropic_client = anthropic.Anthropic()
+
+        logger.info(
+            f"  Evaluating {len(rows)} jobs against candidate profile "
+            f"(parallel, max_workers=3)..."
+        )
+        t_eval = time.monotonic()
+        eval_ok = 0
+        eval_failed = 0
+
+        def _evaluate_one(row, job):
+            match_data = evaluate_match(
+                job.title, job.company, job.description,
+                profile=profile, anthropic_client=anthropic_client,
+            )
+            row.update(match_data)
+            return match_data
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(_evaluate_one, row, job): (row, job)
+                for row, job in zip(rows, new_jobs)
+            }
+            for future in as_completed(futures):
+                row, job = futures[future]
+                try:
+                    match_data = future.result()
+                    eval_ok += 1
+                    logger.info(
+                        f"    [{eval_ok + eval_failed}/{len(rows)}] "
+                        f"{job.company} — {job.title} "
+                        f"-> {match_data['match']} "
+                        f"(score {match_data['match_detail'].get('score', '?')}/10)"
+                    )
+                except Exception as exc:
+                    eval_failed += 1
+                    logger.warning(
+                        f"    [{eval_ok + eval_failed}/{len(rows)}] "
+                        f"{job.company} — {job.title} "
+                        f"-> Match evaluation failed: {exc}"
+                    )
+
+        logger.info(
+            f"  Match evaluation complete: {eval_ok} succeeded, "
+            f"{eval_failed} failed ({time.monotonic() - t_eval:.1f}s)"
+        )
 
     inserted = 0
     batch_size = 50
@@ -680,7 +744,11 @@ if __name__ == "__main__":
             else:
                 print(f"  {key}: {val}")
 
-    storage = store_results(results["matches"])
+    profile = os.environ.get("PROFILE_YAML")
+    if not profile and Path("profile.yaml").exists():
+        profile = Path("profile.yaml").read_text()
+        logger.info("Profile loaded from profile.yaml (local fallback)")
+    storage = store_results(results["matches"], profile=profile)
     print(f"\n{'='*50}")
     print(
         f"Supabase storage: {storage['inserted']} inserted, "
