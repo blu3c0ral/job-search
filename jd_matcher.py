@@ -35,6 +35,74 @@ load_dotenv()
 import logging
 logger = logging.getLogger("jd_matcher")
 
+
+# ============================================================
+# PRE-SCREENING CONSTANTS
+# ============================================================
+
+COMPANY_BLACKLIST = frozenset({
+    "synergisticit",
+    "v-soft",
+    "corevia",
+    "eliassen group",
+    "veracity software",
+    "staffing the universe",
+    "zoolatech",
+    "alignerr",
+    "agileengine",
+    "datasignify",
+    "the developer link",
+})
+
+CONTRACT_SIGNALS = [
+    "contract to hire",
+    "c2h",
+    "corp-to-corp",
+    "corp to corp",
+    "c2c",
+    "hourly rate",
+    "independent contractor",
+    "1099",
+    "w2 contract",
+    "staffing agency",
+    "our client",
+    "direct client",
+]
+
+CONTRACT_SIGNAL_THRESHOLD = 2
+
+PRESCREEN_SYSTEM_PROMPT = """You are a job pre-screening filter. Your ONLY job is to identify OBVIOUS hard-no mismatches against the candidate profile provided. You must be CONSERVATIVE — when in doubt, answer PASS.
+
+You will receive the candidate's profile and a job posting excerpt. Use the profile's dealbreakers, anti_preferences, technologies, target_roles, compensation_range, and role_type_avoid sections to determine if the job is a clear mismatch.
+
+REJECT ONLY if the job CLEARLY triggers one of these:
+1. STAFFING/CONTRACT: The company is obviously a staffing agency, or the role is contract/freelance/C2H — and the profile lists contract roles as an anti-preference or dealbreaker
+2. WRONG PRIMARY STACK: The role PRIMARILY requires technologies the candidate has low enthusiasm for (1-2) with NO overlap with their high-enthusiasm technologies
+3. BELOW COMP FLOOR: Compensation is EXPLICITLY stated AND the MAX of the range makes it impossible to reach the candidate's compensation floor even with equity/bonus
+4. DEALBREAKER TRIGGERED: The role clearly matches something in the candidate's dealbreakers or anti_preferences list (e.g. client-facing, no growth opportunity)
+5. ROLE TYPE MISMATCH: The role type is listed in the candidate's role_type_avoid
+
+CRITICAL RULES:
+- If the JD is ambiguous on any dimension, PASS it through
+- If the JD mentions a low-enthusiasm tech but also mentions high-enthusiasm tech, PASS
+- If comp is not stated, PASS (do NOT guess)
+- A role at a reputable company with unclear details should PASS
+- False positives (rejecting a good job) are 10x worse than false negatives (passing a bad job)
+
+Respond with ONLY valid JSON. Keep the reason under 20 words:
+{"decision": "REJECT" or "PASS", "reason": "<20 words max>"}"""
+
+PRESCREEN_USER_TEMPLATE = """<profile>
+{profile}
+</profile>
+
+Company: {company}
+Title: {title}
+
+Job Description (excerpt):
+{jd_excerpt}"""
+
+
 # Lazy Supabase client — only initialized when DB functions are used
 _supabase_client = None
 
@@ -261,6 +329,107 @@ def verdict_to_enum(verdict: str) -> str:
     return _VERDICT_TO_ENUM.get(verdict.lower(), "Relevant")
 
 
+# ============================================================
+# PRE-SCREENING FUNCTIONS
+# ============================================================
+
+
+def _build_prescreen_result(reason: str, category: str) -> dict:
+    """Build a match result dict for a pre-screen rejection."""
+    return {
+        "match": "Not Relevant",
+        "match_detail": {
+            "score": 1,
+            "verdict": "hard no",
+            "dealbreaker_triggered": reason,
+            "where_it_aligns": [],
+            "where_it_breaks_down": [reason],
+            "bottom_line": f"Pre-screened: {reason}",
+            "comp_risk": None,
+            "comp_note": None,
+            "pre_screen": True,
+            "pre_screen_category": category,
+        },
+    }
+
+
+def deterministic_pre_filter(title: str, company: str, jd_text: str) -> dict | None:
+    """Instant rejection for known-bad patterns. No API call.
+
+    Returns None if the job passes, or a rejection dict if it should be skipped.
+    """
+    company_lower = company.lower().strip()
+
+    for blacklisted in COMPANY_BLACKLIST:
+        if blacklisted in company_lower:
+            return _build_prescreen_result(
+                f"Company '{company}' is a known staffing agency",
+                "company_blacklist",
+            )
+
+    jd_lower = jd_text.lower()
+    hits = sum(1 for signal in CONTRACT_SIGNALS if signal in jd_lower)
+    if hits >= CONTRACT_SIGNAL_THRESHOLD:
+        return _build_prescreen_result(
+            f"JD contains {hits} contract/staffing signals",
+            "contract_signals",
+        )
+
+    return None
+
+
+def haiku_pre_screen(
+    title: str,
+    company: str,
+    jd_text: str,
+    profile: str,
+    anthropic_client: anthropic.Anthropic,
+) -> dict | None:
+    """Cheap Haiku pre-screen. Returns rejection dict or None (pass through).
+
+    Sends first 2000 chars of JD (covers intro + requirements for most postings). Fail-open on any error.
+    """
+    jd_excerpt = jd_text[:2000] if jd_text else ""
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            system=PRESCREEN_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": PRESCREEN_USER_TEMPLATE.format(
+                    profile=profile,
+                    company=company,
+                    title=title,
+                    jd_excerpt=jd_excerpt,
+                ),
+            }],
+        )
+
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+
+        result = json.loads(raw)
+
+        if result.get("decision", "").upper() == "REJECT":
+            reason = result.get("reason", "Haiku pre-screen rejection")
+            logger.info(f"  Haiku REJECT: {company} — {title}: {reason}")
+            return _build_prescreen_result(
+                f"Haiku: {reason}",
+                "haiku_prescreen",
+            )
+
+        logger.debug(f"  Haiku PASS: {company} — {title}")
+        return None
+
+    except Exception as exc:
+        logger.warning(f"  Haiku pre-screen error for {company} — {title}: {exc}. Passing through.")
+        return None
+
+
 def evaluate_and_store(
     job_id: str,
     platform: str,
@@ -353,6 +522,22 @@ def evaluate_match(
         anthropic_client = anthropic.Anthropic()
 
     logger.debug(f"evaluate_match: {company} — {title} ({len(jd_text)} chars)")
+
+    # Layer 1: Deterministic pre-filter (instant, no API call)
+    det_result = deterministic_pre_filter(title, company, jd_text)
+    if det_result is not None:
+        logger.info(
+            f"  DETERMINISTIC REJECT: {company} — {title}: "
+            f"{det_result['match_detail']['dealbreaker_triggered']}"
+        )
+        return det_result
+
+    # Layer 2: Haiku pre-screen (cheap, ~$0.001/job)
+    haiku_result = haiku_pre_screen(title, company, jd_text, profile, anthropic_client)
+    if haiku_result is not None:
+        return haiku_result
+
+    # Layer 3: Opus deep evaluation
     jd = {"title": title, "company": company, "jd_text": jd_text}
     result = evaluate_jd(anthropic_client, profile, jd)
 

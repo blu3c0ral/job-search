@@ -326,12 +326,26 @@ def store_results(
                 try:
                     match_data = future.result()
                     eval_ok += 1
-                    logger.info(
-                        f"    [{eval_ok + eval_failed}/{len(rows)}] "
-                        f"{job.company} — {job.title} "
-                        f"-> {match_data['match']} "
-                        f"(score {match_data['match_detail'].get('score', '?')}/10)"
-                    )
+                    detail = match_data.get("match_detail", {})
+                    if detail.get("pre_screen"):
+                        category = detail.get("pre_screen_category", "pre_screen")
+                        label = {
+                            "company_blacklist": "BLACKLIST",
+                            "contract_signals": "CONTRACT",
+                            "haiku_prescreen": "HAIKU",
+                        }.get(category, category.upper())
+                        logger.info(
+                            f"    [{eval_ok + eval_failed}/{len(rows)}] "
+                            f"{job.company} — {job.title} "
+                            f"-> Not Relevant [{label}]"
+                        )
+                    else:
+                        logger.info(
+                            f"    [{eval_ok + eval_failed}/{len(rows)}] "
+                            f"{job.company} — {job.title} "
+                            f"-> {match_data['match']} "
+                            f"(score {detail.get('score', '?')}/10)"
+                        )
                 except Exception as exc:
                     eval_failed += 1
                     logger.warning(
