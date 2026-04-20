@@ -245,6 +245,114 @@ def _job_to_row(job: "JobPosting") -> dict:
     }
 
 
+# ─── Resume Tailoring ───────────────────────────────────────────────────────
+
+TAILOR_QUALIFYING_MATCHES = {"Excelent Match", "Good Match"}
+TAILOR_STORAGE_BUCKET = "tailored-resumes"
+TAILOR_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+
+def _download_base_resume() -> Path | None:
+    """
+    Download the base resume from Supabase Storage to a local temp file.
+    Uses RESUME_STORAGE_PATH env var for the path within the bucket.
+    Returns the local Path, or None if not configured / download fails.
+    """
+    storage_path = os.environ.get("RESUME_STORAGE_PATH", "")
+    if not storage_path:
+        return None
+    try:
+        data = supabase.storage.from_(TAILOR_STORAGE_BUCKET).download(storage_path)
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+        tmp.write(data)
+        tmp.close()
+        return Path(tmp.name)
+    except Exception as exc:
+        logger.warning(f"  Failed to download base resume from storage: {exc}")
+        return None
+
+
+def _tailor_resumes_for_rows(
+    rows: list[dict],
+    jobs: list["JobPosting"],
+    profile: str | None,
+    anthropic_client,
+) -> None:
+    """
+    For rows that qualify (Excelent Match / Good Match), tailor the resume
+    to the JD and upload to Supabase Storage. Sets ``tailored_resume`` on
+    the row dict.
+
+    Skipped silently if RESUME_TAILOR_CONFIG is not set or base resume
+    is not available — this makes the feature opt-in.
+    """
+    config_raw = os.environ.get("RESUME_TAILOR_CONFIG", "")
+    if not config_raw:
+        return  # tailoring not configured
+
+    resume_path = _download_base_resume()
+    if resume_path is None:
+        logger.warning("  Resume tailoring: base resume not available, skipping.")
+        return
+
+    qualifying = [
+        (row, job)
+        for row, job in zip(rows, jobs)
+        if row.get("match") in TAILOR_QUALIFYING_MATCHES
+    ]
+    if not qualifying:
+        resume_path.unlink(missing_ok=True)
+        return
+
+    import json as _json
+    from resume_tailoring import tailor_resume_bytes
+
+    tailor_config = _json.loads(config_raw)
+
+    logger.info(
+        f"  Tailoring resumes for {len(qualifying)} qualifying matches..."
+    )
+    t_tailor = time.monotonic()
+    tailor_ok = 0
+
+    for row, job in qualifying:
+        storage_path = f"{row['source_platform']}/{row['id']}.docx"
+        try:
+            docx_bytes, changes = tailor_resume_bytes(
+                str(resume_path),
+                job.description,
+                profile=profile,
+                config=tailor_config,
+                anthropic_client=anthropic_client,
+            )
+            supabase.storage.from_(TAILOR_STORAGE_BUCKET).upload(
+                storage_path,
+                docx_bytes,
+                {"content-type": TAILOR_CONTENT_TYPE},
+            )
+            row["tailored_resume"] = storage_path
+            row["tailoring_changes"] = changes
+            tailor_ok += 1
+            logger.info(
+                f"    {job.company} — {job.title} "
+                f"-> resume tailored & uploaded ({len(changes)} changes)"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"    {job.company} — {job.title} -> tailoring failed: {exc}"
+            )
+
+    resume_path.unlink(missing_ok=True)
+
+    logger.info(
+        f"  Resume tailoring complete: {tailor_ok}/{len(qualifying)} succeeded "
+        f"({time.monotonic() - t_tailor:.1f}s)"
+    )
+
+
 def store_results(
     matches: list["JobPosting"],
     *,
@@ -358,6 +466,9 @@ def store_results(
             f"  Match evaluation complete: {eval_ok} succeeded, "
             f"{eval_failed} failed ({time.monotonic() - t_eval:.1f}s)"
         )
+
+    # ── Resume tailoring for strong matches ──────────────────────────────
+    _tailor_resumes_for_rows(rows, new_jobs, profile, anthropic_client)
 
     inserted = 0
     batch_size = 50

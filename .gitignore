@@ -29,3 +29,5 @@ Thumbs.db
 # Sensitive profile (stored in GitHub Secrets for CI)
 profile.yaml
 .git-crypt/
+resume.docx
+resume_tailoring_config.json
