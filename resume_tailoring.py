@@ -27,6 +27,7 @@ Configuration:
                       "Environment", "AI/ML Frameworks"],
       "education_prefixes": ["Associate", "Bachelor", "Master", "Ph.D"],
       "frozen_terms": ["US citizen"],
+      "resume_name": "Jane Resume",
       "min_edit_length": 25,
       "model": "claude-sonnet-4-20250514"
     }

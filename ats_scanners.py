@@ -318,8 +318,12 @@ def _tailor_resumes_for_rows(
     t_tailor = time.monotonic()
     tailor_ok = 0
 
+    resume_name = tailor_config.get("resume_name", "Resume")
+
     for row, job in qualifying:
-        storage_path = f"{row['source_platform']}/{row['id']}.docx"
+        company = re.sub(r'[^\w\s-]', '', job.company).strip()
+        filename = f"{resume_name} - {company}.docx"
+        storage_path = f"{row['source_platform']}/{filename}"
         try:
             docx_bytes, changes = tailor_resume_bytes(
                 str(resume_path),
