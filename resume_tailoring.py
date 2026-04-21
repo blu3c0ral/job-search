@@ -76,7 +76,7 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = lambda tag: f"{{{W_NS}}}{tag}"  # noqa: E731
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-opus-4-6"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_MIN_EDIT_LENGTH = 25
 DEFAULT_TEMPERATURE = 0.3
@@ -417,9 +417,10 @@ Spread edits across the resume — do not cluster them all in the summary and sk
 list. At least half your edits should be in work-experience bullet points.
 - Keep roughly the same length — do not expand or shrink significantly.
 - For keyword/skill lists (items separated by ▪ or commas): reorder to put the \
-most JD-relevant items first. You may ONLY reorder existing items — do not add, \
-rename, or remove any item. "Production ML Systems" cannot appear if the original \
-list does not contain those exact words.
+most JD-relevant items first. You may rephrase existing items to better match JD \
+language (e.g., "LLM Agent Systems" → "AI Agent Systems") and consolidate themes \
+already demonstrated in the resume into a concise label. Do NOT add skills, tools, \
+or technologies that aren't evidenced anywhere in the resume.
 - ATS optimization: ensure critical JD keywords appear naturally in the resume. \
 The most impactful placements are: summary line, bullet point text, and keyword \
 lists. Do not stuff keywords into unnatural positions.
