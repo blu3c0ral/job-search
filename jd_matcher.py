@@ -86,7 +86,9 @@ CRITICAL RULES:
 - If the JD is ambiguous on any dimension, PASS it through
 - If the JD mentions a low-enthusiasm tech but also mentions high-enthusiasm tech, PASS
 - If comp is not stated, PASS (do NOT guess)
+- Comp floor tolerance: if max compensation is within 5% of the candidate's floor, PASS — do not reject on rounding
 - A role at a reputable company with unclear details should PASS
+- NYC metro geography: all 5 boroughs (Manhattan, Brooklyn, Queens, Bronx, Staten Island), plus NJ within commute distance (Hoboken, Jersey City, Newark, etc.) are ALL valid locations — do NOT reject these as "outside NYC metro"
 - False positives (rejecting a good job) are 10x worse than false negatives (passing a bad job)
 
 Respond with ONLY valid JSON. Keep the reason under 20 words:
