@@ -325,7 +325,7 @@ def _tailor_resumes_for_rows(
         filename = f"{resume_name} - {company}.docx"
         storage_path = f"{row['source_platform']}/{filename}"
         try:
-            docx_bytes, changes = tailor_resume_bytes(
+            docx_bytes, changes, gaps = tailor_resume_bytes(
                 str(resume_path),
                 job.description,
                 profile=profile,
@@ -338,11 +338,12 @@ def _tailor_resumes_for_rows(
                 {"content-type": TAILOR_CONTENT_TYPE},
             )
             row["tailored_resume"] = storage_path
-            row["tailoring_changes"] = changes
+            row["tailoring_changes"] = {"changes": changes, "gaps": gaps}
             tailor_ok += 1
             logger.info(
                 f"    {job.company} — {job.title} "
-                f"-> resume tailored & uploaded ({len(changes)} changes)"
+                f"-> resume tailored & uploaded "
+                f"({len(changes)} changes, {len(gaps)} gaps)"
             )
         except Exception as exc:
             logger.warning(

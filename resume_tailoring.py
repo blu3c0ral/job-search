@@ -338,10 +338,10 @@ def _save_document_xml(tree, doc_path: str) -> None:
 # ── Claude interaction ────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """\
-You are an expert resume writer. You tailor resume bullet points to better match \
-a target job description. You are strategic: surface the most relevant aspects of \
-existing experience, rephrase to mirror the language of the JD, and reorder keywords \
-for maximum impact — but you never fabricate."""
+You are an expert resume writer and ATS optimization specialist. You tailor \
+resume bullet points to better match a target job description. You are strategic: \
+surface the most relevant aspects of existing experience, mirror JD language, \
+reorder for impact — but you NEVER fabricate experience."""
 
 
 def _build_user_prompt(
@@ -364,48 +364,110 @@ the job description.
 ## Resume Paragraphs
 Each line is prefixed with [N].
 
-Rules:
+## Strategy
+
+Before making any edits, mentally map each resume paragraph to the JD:
+1. Which bullet points describe work that directly matches JD requirements? \
+These are your highest-priority edit targets — rephrase to mirror JD language.
+2. Which bullet points describe adjacent/transferable experience? \
+These can benefit from subtle emphasis shifts.
+3. Which bullet points have no connection to the JD? Leave these UNCHANGED.
+
+Prioritize edits on paragraphs where the candidate HAS relevant experience \
+but the current wording doesn't surface it. The summary line and skill lists \
+are important, but the real value is in the work-experience bullets where \
+a small rephrase can surface a highly relevant facet of existing work.
+
+## THE CARDINAL RULE: NEVER FABRICATE
+
+Every edit must trace back to what is already written in that paragraph. \
+If you cannot point to the original content being modified, the edit is \
+fabrication and must not be made.
+
+ALLOWED edits:
+- Swapping synonyms to match JD language (e.g., "data processing" → \
+"data pipeline" IF the work was indeed a pipeline)
+- Reordering clauses within a bullet to lead with the most JD-relevant facet \
+(e.g., if a bullet mentions both "data processing" and "LLM-based agent", \
+lead with whichever the JD prioritizes)
+- Adding a JD keyword into an existing sentence where it truthfully applies \
+(e.g., adding "high-scale" before "distributed system" if it was indeed high-scale)
+- Trimming or tightening existing language
+- Tweaking the summary line using themes already present in the resume
+
+FORBIDDEN edits:
+- Inventing skills, tools, metrics, or achievements not in the original text
+- Changing the candidate's professional title/identity (e.g., "backend software \
+engineer" must not become "applied AI engineer" or "ML engineer" — the title \
+describes who the candidate IS, not just this application)
+- Misrepresenting what the work actually was ("chat pipeline" must NOT become \
+"data pipeline" — describe the same work, just highlight its most relevant facets)
+- Adding technologies or keywords not present in THAT paragraph's original text
+- Moving content between paragraphs
+- Paraphrasing JD requirements as if they were the candidate's experience
+
+Verification: before finalizing each edit, confirm: "Does the original paragraph \
+contain content that this edit modifies?" If no, discard the edit and note it as a gap.
+
+## Rules
+
 - Return the SAME number of paragraphs. One entry per index.
-- For each paragraph, decide: does it have a stronger angle to surface for this JD? \
-If yes, rephrase it — reorder clauses, mirror the JD's language, shift emphasis to \
-the most relevant parts of the existing content. \
-If the paragraph already aligns well and cannot be improved, return it UNCHANGED.
+- Aim for 3–7 targeted changes. Fewer is fine if the resume already aligns well. \
+Spread edits across the resume — do not cluster them all in the summary and skill \
+list. At least half your edits should be in work-experience bullet points.
 - Keep roughly the same length — do not expand or shrink significantly.
-- CRITICAL: Do NOT invent any data, facts, numbers, achievements, technologies, \
-or responsibilities not present in the SAME paragraph's original text. Every word \
-you add or change must be grounded in what is already written in THAT paragraph. \
-Do not move content between paragraphs. Rephrasing, reordering, and shifting \
-emphasis is encouraged; fabrication or misrepresentation of what the work actually \
-was is not. "Chat pipeline" must not become "data pipeline" — describe the same work, \
-just highlight its most relevant facets.
 - For keyword/skill lists (items separated by ▪ or commas): reorder to put the \
-most JD-relevant items first. Do not add items that are not already in that list.
+most JD-relevant items first. You may ONLY reorder existing items — do not add, \
+rename, or remove any item. "Production ML Systems" cannot appear if the original \
+list does not contain those exact words.
+- ATS optimization: ensure critical JD keywords appear naturally in the resume. \
+The most impactful placements are: summary line, bullet point text, and keyword \
+lists. Do not stuff keywords into unnatural positions.
 - Do NOT rename proper nouns: company names, product names, technologies, \
 programming languages.
 - If a line has a "Label: description" pattern (e.g., "ProjectName: Built..."), \
 keep the label and colon intact. Only rewrite the description part.
 - Preserve the tone: confident, specific, first-person implied (no "I").
-- Output ONLY a JSON object mapping index (string) to text (original or rewritten). \
-No preamble, no markdown fences, no explanation.
 
-Example: {{"0": "rewritten text", "1": "unchanged original text", "2": "rewritten text"}}
+## Output Format
+
+Return a JSON object with three keys:
+- "paragraphs": object mapping index (string) to text (original or rewritten)
+- "rationale": object mapping index (string) to a one-sentence reason for each \
+paragraph that was CHANGED (omit unchanged paragraphs)
+- "gaps": array of strings listing JD requirements not covered by any resume \
+content (do not fabricate content to fill these — just report them)
+
+No preamble, no markdown fences, no explanation outside the JSON.
+
+Example:
+{{
+  "paragraphs": {{"0": "rewritten text", "1": "unchanged text", "2": "rewritten text"}},
+  "rationale": {{"0": "Reordered to lead with distributed systems for this infra role", \
+"2": "Added 'high-scale' to mirror JD language — work was indeed high-scale"}},
+  "gaps": ["JD requires Terraform experience not present in resume"]
+}}
 
 ## Paragraphs:
 {para_block}"""
 
 
-def _parse_json_response(raw: str) -> dict[str, str]:
+def _parse_json_response(raw: str) -> dict:
     """Parse Claude's response, stripping markdown fences if present."""
     raw = raw.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw)
+    parsed = json.loads(raw)
+    # Support both old flat format {"0": "text", ...} and new rich format
+    if "paragraphs" in parsed:
+        return parsed
+    return {"paragraphs": parsed, "rationale": {}, "gaps": []}
 
 
 def _call_claude(
     prompt: str, model: str, anthropic_client=None,
-) -> dict[str, str]:
+) -> dict:
     client = anthropic_client or anthropic.Anthropic()
 
     for attempt in range(2):
@@ -446,16 +508,24 @@ def _extract_editable_paragraphs(tree, is_frozen) -> list[dict]:
 
 
 def _apply_rewrites(
-    editable_paras: list[dict], rewrites: dict[str, str],
+    editable_paras: list[dict], response: dict,
 ) -> list[dict]:
     """Apply rewrites and return a changelog of what changed."""
+    paragraphs = response["paragraphs"]
+    rationale = response.get("rationale", {})
     changes = []
     for i, para in enumerate(editable_paras):
         key = str(i)
-        if key in rewrites and rewrites[key].strip():
-            new_text = rewrites[key].strip()
+        if key in paragraphs and paragraphs[key].strip():
+            new_text = paragraphs[key].strip()
             if new_text != para["text"]:
-                changes.append({"original": para["text"], "tailored": new_text})
+                change = {
+                    "original": para["text"],
+                    "tailored": new_text,
+                }
+                if key in rationale:
+                    change["why"] = rationale[key]
+                changes.append(change)
                 _set_para_text(para["el"], new_text)
     return changes
 
@@ -469,10 +539,10 @@ def _tailor_core(
     profile: Optional[str] = None,
     config: Optional[dict] = None,
     anthropic_client=None,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], list[str]]:
     """
     Core tailoring pipeline. Writes the tailored .docx to output_path.
-    Returns (absolute_output_path, changelog).
+    Returns (absolute_output_path, changelog, gaps).
     """
     if config is None:
         config = _load_config_from_env()
@@ -495,15 +565,18 @@ def _tailor_core(
 
         prompt = _build_user_prompt(editable, jd, profile)
         logger.info(f"Calling {model}...")
-        rewrites = _call_claude(prompt, model, anthropic_client=anthropic_client)
-        logger.info(f"Received {len(rewrites)} rewrites.")
+        response = _call_claude(prompt, model, anthropic_client=anthropic_client)
 
-        changes = _apply_rewrites(editable, rewrites)
+        paragraphs = response.get("paragraphs", {})
+        gaps = response.get("gaps", [])
+        logger.info(f"Received {len(paragraphs)} paragraphs, {len(gaps)} gaps.")
+
+        changes = _apply_rewrites(editable, response)
 
         _save_document_xml(tree, doc_path)
         _pack_docx(tmpdir, output_path)
 
-    return output_path, changes
+    return output_path, changes, gaps
 
 
 def tailor_resume(
@@ -513,29 +586,21 @@ def tailor_resume(
     profile: Optional[str] = None,
     config: Optional[dict] = None,
     anthropic_client=None,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], list[str]]:
     """
     Tailor a .docx resume to a job description.
 
-    Args:
-        resume_path:       Path to the original resume .docx file.
-        jd:                Job description text (plain string).
-        output_path:       Where to write the tailored .docx.
-        profile:           Optional deep-profile text for richer context.
-        config:            Optional config dict. If None, loads from env var
-                           RESUME_TAILOR_CONFIG or RESUME_TAILOR_CONFIG_PATH.
-        anthropic_client:  Optional Anthropic client instance to reuse.
-
     Returns:
-        (absolute_output_path, changelog) where changelog is a list of
-        {"original": str, "tailored": str} dicts.
+        (absolute_output_path, changelog, gaps)
+        - changelog: list of {"original", "tailored", "why"} dicts
+        - gaps: list of JD requirements not covered by the resume
     """
-    result, changes = _tailor_core(
+    result, changes, gaps = _tailor_core(
         resume_path, jd, output_path,
         profile=profile, config=config, anthropic_client=anthropic_client,
     )
-    logger.info(f"Done → {result} ({len(changes)} paragraphs changed)")
-    return result, changes
+    logger.info(f"Done → {result} ({len(changes)} changes, {len(gaps)} gaps)")
+    return result, changes, gaps
 
 
 def tailor_resume_bytes(
@@ -544,22 +609,23 @@ def tailor_resume_bytes(
     profile: Optional[str] = None,
     config: Optional[dict] = None,
     anthropic_client=None,
-) -> tuple[bytes, list[dict]]:
+) -> tuple[bytes, list[dict], list[str]]:
     """
     Tailor a .docx resume and return the result as bytes (for upload).
 
     Returns:
-        (docx_bytes, changelog) where changelog is a list of
-        {"original": str, "tailored": str} dicts.
+        (docx_bytes, changelog, gaps)
+        - changelog: list of {"original", "tailored", "why"} dicts
+        - gaps: list of JD requirements not covered by the resume
     """
     with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
         tmp_path = tmp.name
     try:
-        _, changes = _tailor_core(
+        _, changes, gaps = _tailor_core(
             resume_path, jd, tmp_path,
             profile=profile, config=config, anthropic_client=anthropic_client,
         )
-        return Path(tmp_path).read_bytes(), changes
+        return Path(tmp_path).read_bytes(), changes, gaps
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

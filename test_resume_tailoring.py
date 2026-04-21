@@ -118,7 +118,7 @@ print(f"  Config loaded: {list(config.keys())}")
 print(f"  Model: {config.get('model', 'claude-sonnet-4-20250514')}")
 
 t0 = time.monotonic()
-docx_bytes, changes = tailor_resume_bytes(
+docx_bytes, changes, gaps = tailor_resume_bytes(
     resume_path,
     job["job_description"],
     config=config,
@@ -129,6 +129,7 @@ elapsed = time.monotonic() - t0
 print(f"\n  Tailoring complete in {elapsed:.1f}s")
 print(f"  Output size: {len(docx_bytes):,} bytes")
 print(f"  Paragraphs changed: {len(changes)}")
+print(f"  Gaps identified: {len(gaps)}")
 print("  PASS\n")
 
 # ── Test 4: Verify the .docx is valid ─────────────────────────────────────────
@@ -163,6 +164,15 @@ for i, change in enumerate(changes, 1):
     print(f"\n  [{i}/{len(changes)}]")
     print(f"  BEFORE: {change['original'][:120]}")
     print(f"  AFTER:  {change['tailored'][:120]}")
+    if "why" in change:
+        print(f"  WHY:    {change['why']}")
+
+if gaps:
+    print("\n" + "=" * 60)
+    print("GAPS — JD requirements not covered by resume")
+    print("=" * 60)
+    for i, gap in enumerate(gaps, 1):
+        print(f"  {i}. {gap}")
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 
