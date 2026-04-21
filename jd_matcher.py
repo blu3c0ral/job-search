@@ -178,9 +178,24 @@ Respond with a JSON object only. No preamble, no markdown, no explanation outsid
     "where_it_breaks_down": [<string>, ...],
     "bottom_line": <1-2 sentence string: apply or skip and why>,
     "comp_risk": <"none" | "low" | "medium" | "high">,
-    "comp_note": <string explaining comp assessment, or null>
+    "comp_note": <string explaining comp assessment, or null>,
+    "why_this_company": <string: 1-2 sentences>,
+    "why_this_role": <string: 1-2 sentences>,
+    "something_i_built_and_proud_of": <string: 1-2 sentences>
 }
 ```
+
+## Application narrative fields:
+
+These three fields will be used verbatim in real job applications. They are NOT internal evaluation notes — they go directly to hiring teams.
+
+CRITICAL: DO NOT invent, embellish, or fabricate any information. Every fact, project name, technology, and claim MUST come directly from the candidate's profile. If the profile doesn't mention it, don't write it. Rephrasing profile content is fine; inventing new content is not.
+
+Write from the candidate's perspective (first person). Keep it simple, confident, and relaxed — no corporate fluff, no buzzwords, no "I'm passionate about", no "I'm excited to". 1-2 sentences each, max.
+
+- **why_this_company**: What draws the candidate to this specific company? Pull from the JD's details about the company's product, mission, or technical challenges. Be specific to this company — generic answers are useless.
+- **why_this_role**: Why does this particular role appeal to the candidate given their background? Connect the role's responsibilities to what they actually enjoy doing (from the profile). Only reference skills and interests that appear in the profile.
+- **something_i_built_and_proud_of**: Pick the most relevant thing from the candidate's profile that connects to this role's domain. Use only projects, systems, and accomplishments explicitly mentioned in the profile — do not invent or infer projects that aren't there.
 
 ## For each JD, provide:
 
@@ -329,6 +344,15 @@ _VERDICT_TO_ENUM = {
 def verdict_to_enum(verdict: str) -> str:
     """Map a jd_matcher verdict to the JobMatchEnum value used in Supabase."""
     return _VERDICT_TO_ENUM.get(verdict.lower(), "Relevant")
+
+
+_NARRATIVE_KEYS = frozenset({
+    "why_this_company",
+    "why_this_role",
+    "something_i_built_and_proud_of",
+})
+
+_EXCLUDE_FROM_DETAIL = frozenset({"company", "title"}) | _NARRATIVE_KEYS
 
 
 # ============================================================
@@ -487,16 +511,18 @@ def evaluate_and_store(
     result = evaluate_jd(anthropic_client, profile, jd)
 
     match_enum = verdict_to_enum(result.get("verdict", ""))
-    match_detail = {k: result[k] for k in result if k not in ("company", "title")}
+    match_detail = {k: result[k] for k in result if k not in _EXCLUDE_FROM_DETAIL}
 
     logger.info(
         f"  Result: {match_enum} (score {result.get('score', '?')}/10, "
         f"verdict: {result.get('verdict', '?')})"
     )
     logger.info("  Writing match + match_detail to Supabase...")
-    db.table("job_search_main").update(
-        {"match": match_enum, "match_detail": match_detail}
-    ).eq("id", job_id).eq("source_platform", platform).execute()
+    update_data = {"match": match_enum, "match_detail": match_detail}
+    for k in _NARRATIVE_KEYS:
+        if k in result:
+            update_data[k] = result[k]
+    db.table("job_search_main").update(update_data).eq("id", job_id).eq("source_platform", platform).execute()
     logger.info("  Done.")
 
     return result
@@ -544,13 +570,18 @@ def evaluate_match(
     result = evaluate_jd(anthropic_client, profile, jd)
 
     match_enum = verdict_to_enum(result.get("verdict", ""))
-    match_detail = {k: result[k] for k in result if k not in ("company", "title")}
+    match_detail = {k: result[k] for k in result if k not in _EXCLUDE_FROM_DETAIL}
+
+    out = {"match": match_enum, "match_detail": match_detail}
+    for k in _NARRATIVE_KEYS:
+        if k in result:
+            out[k] = result[k]
 
     logger.debug(
         f"evaluate_match result: {match_enum} "
         f"(score {result.get('score', '?')}/10)"
     )
-    return {"match": match_enum, "match_detail": match_detail}
+    return out
 
 
 def verdict_emoji(verdict: str) -> str:

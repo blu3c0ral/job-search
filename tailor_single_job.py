@@ -106,6 +106,11 @@ def main():
     # ─── Load profile ─────────────────────────────────────────────────────
     profile = os.environ.get("PROFILE_YAML")
 
+    # ─── Evaluate match (populates narrative fields) ──────────────────────
+    from jd_matcher import evaluate_and_store
+    logger.info("Evaluating job match...")
+    evaluate_and_store(job_id, platform, profile=profile, anthropic_client=client)
+
     # ─── Tailor ───────────────────────────────────────────────────────────
     logger.info("Running resume tailoring...")
     t0 = time.monotonic()
