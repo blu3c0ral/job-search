@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
   // Only allow updating specific fields
   const allowed = [
     "status",
+    "applied_date",
     "why_this_company",
     "why_this_role",
     "something_i_built_and_proud_of",

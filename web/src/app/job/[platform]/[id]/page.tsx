@@ -1,4 +1,5 @@
 import { getSupabase } from "@/lib/supabase";
+import { extractDocxText } from "@/lib/docx";
 import { Job } from "@/lib/types";
 import { JobDetail } from "./job-detail";
 import Link from "next/link";
@@ -33,5 +34,11 @@ export default async function JobPage({
     );
   }
 
-  return <JobDetail job={data as Job} />;
+  const job = data as Job;
+  let resumeText = "";
+  if (job.tailored_resume) {
+    resumeText = await extractDocxText(supabase, job.tailored_resume);
+  }
+
+  return <JobDetail job={job} resumeText={resumeText} />;
 }

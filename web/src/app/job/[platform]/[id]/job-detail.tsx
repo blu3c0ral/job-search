@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { Job, MatchDetail, TailoringChange, TailoringData } from "@/lib/types";
+import { RephraseChat } from "./rephrase-chat";
 
 const MATCH_COLORS: Record<string, string> = {
   "Excelent Match": "bg-green-100 text-green-800 border-green-300",
@@ -22,7 +23,7 @@ const STATUS_OPTIONS = [
   "Skipped",
 ];
 
-export function JobDetail({ job }: { job: Job }) {
+export function JobDetail({ job, resumeText }: { job: Job; resumeText: string }) {
   const [status, setStatus] = useState(job.status);
   const [saving, setSaving] = useState<string | null>(null);
   const [tailorState, setTailorState] = useState<"idle" | "triggering" | "triggered" | "error">("idle");
@@ -94,8 +95,15 @@ export function JobDetail({ job }: { job: Job }) {
           <select
             value={status}
             onChange={(e) => {
-              setStatus(e.target.value);
-              save("status", e.target.value);
+              const newStatus = e.target.value;
+              setStatus(newStatus);
+              if (newStatus === "Applied" && status === "New") {
+                const today = new Date().toISOString().split("T")[0];
+                save("status", newStatus);
+                save("applied_date", today);
+              } else {
+                save("status", newStatus);
+              }
             }}
             className="border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           >
@@ -292,6 +300,8 @@ export function JobDetail({ job }: { job: Job }) {
           </pre>
         </Collapsible>
       )}
+
+      <RephraseChat jobId={job.id} sourcePlatform={job.source_platform} resumeText={resumeText} />
     </main>
   );
 }

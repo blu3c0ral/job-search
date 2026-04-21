@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   const supabase = getSupabase();
   const { data, error } = await supabase.storage
     .from("tailored-resumes")
-    .createSignedUrl(path, 60);
+    .createSignedUrl(path, 60, { download: "resume.docx" });
 
   if (error || !data?.signedUrl) {
     return NextResponse.json(
