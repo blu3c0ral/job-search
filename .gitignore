@@ -31,3 +31,8 @@ profile.yaml
 .git-crypt/
 resume.docx
 resume_tailoring_config.json
+
+# Web UI
+web/node_modules/
+web/.next/
+web/.env.local
