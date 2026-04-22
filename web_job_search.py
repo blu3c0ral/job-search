@@ -203,22 +203,22 @@ def build_serpapi_queries(
 ) -> list[dict]:
     """Build google_jobs query dicts — no LLM call needed.
 
-    Produces ~5 queries:
-      2 x title-based (broad discovery, past week)
+    Produces ~7 queries:
+      4 x title-based (broad discovery, past week)
       3 x company-targeted (from rotation, past month — wider window)
 
     Note: The `location` param is SerpAPI's geo-targeting (city-level).
     DB locations ("remote", "us", "nyc") are for post-filtering, not search.
     """
-    t1 = titles[0] if titles else "software engineer"
-    t2 = titles[1] if len(titles) > 1 else "backend engineer"
+    defaults = ["software engineer", "backend engineer", "machine learning engineer", "staff engineer"]
+    title_list = [titles[i] if i < len(titles) else defaults[i] for i in range(4)]
     loc = location
 
     queries: list[dict] = []
 
-    # 2 title-based broad discovery
-    queries.append({"query": t1, "location": loc, "chips": "date_posted:week"})
-    queries.append({"query": t2, "location": loc, "chips": "date_posted:week"})
+    # 4 title-based broad discovery
+    for title in title_list:
+        queries.append({"query": title, "location": loc, "chips": "date_posted:week"})
 
     # 3 company-targeted (wider window — a 3-week-old posting from a target company is still valuable)
     for company in companies[:3]:
@@ -558,7 +558,7 @@ def run_web_search() -> dict:
     logger.info("=" * 60)
     logger.info("PHASE 2 — SerpAPI google_jobs search")
     logger.info("=" * 60)
-    titles = fetch_target_titles(n=3)
+    titles = fetch_target_titles(n=4)
     companies = fetch_target_companies(n=3)
     queries = build_serpapi_queries(titles, companies)
 
