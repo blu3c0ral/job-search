@@ -223,7 +223,7 @@ def build_serpapi_queries(
     # 3 company-targeted (wider window — a 3-week-old posting from a target company is still valuable)
     for company in companies[:3]:
         queries.append({
-            "query": f"{company} {t1}",
+            "query": f"{company} {title_list[0]}",
             "location": loc,
             "chips": "date_posted:month",
         })
