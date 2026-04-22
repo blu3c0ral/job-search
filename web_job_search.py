@@ -599,7 +599,6 @@ def run_web_search() -> dict:
     if not filtered_results:
         logger.info("Nothing new to process after filtering.")
         slug_result = store_discovered_slugs(all_slugs)
-        auto_discover_companies(unique_results)
         return {
             "total_found": 0,
             "stored": 0,
@@ -645,10 +644,9 @@ def run_web_search() -> dict:
 
     # ── Phase 5: Discover slugs and companies ─────────────────────────────────
     logger.info("=" * 60)
-    logger.info("PHASE 5 — Discover slugs and companies")
+    logger.info("PHASE 5 — Discover ATS slugs")
     logger.info("=" * 60)
     slug_result = store_discovered_slugs(all_slugs)
-    auto_discover_companies(filtered_results)
 
     elapsed = time.monotonic() - t0
     logger.info(
