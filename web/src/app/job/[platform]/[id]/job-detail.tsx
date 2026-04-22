@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import Link from "next/link";
 import { Job, MatchDetail, TailoringChange, TailoringData } from "@/lib/types";
 import { RephraseChat } from "./rephrase-chat";
 
@@ -66,9 +65,9 @@ export function JobDetail({ job, resumeText }: { job: Job; resumeText: string })
   return (
     <main className="flex flex-col flex-1 px-4 py-6 max-w-4xl mx-auto w-full">
       {/* Back link */}
-      <Link href="/" className="text-accent hover:underline text-sm mb-4">
+      <a href="/" className="text-accent hover:underline text-sm mb-4">
         &larr; Back to jobs
-      </Link>
+      </a>
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3 mb-6">

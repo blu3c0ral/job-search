@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useMemo } from "react";
 import { Job } from "@/lib/types";
 
@@ -43,7 +42,6 @@ const MATCH_ORDER = [
 ];
 
 export function JobTable({ jobs }: { jobs: TableJob[] }) {
-  const router = useRouter();
   const [matchFilter, setMatchFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [search, setSearch] = useState("");
@@ -182,11 +180,9 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
               <tr
                 key={`${job.source_platform}-${job.id}`}
                 className="border-b border-border hover:bg-blue-50 cursor-pointer transition-colors"
-                onClick={() =>
-                  router.push(
-                    `/job/${encodeURIComponent(job.source_platform)}/${encodeURIComponent(job.id)}`
-                  )
-                }
+                onClick={() => {
+                  window.location.href = `/job/${encodeURIComponent(job.source_platform)}/${encodeURIComponent(job.id)}`;
+                }}
               >
                 <td className="px-3 py-2 font-medium">{job.company}</td>
                 <td className="px-3 py-2 max-w-[300px] truncate">

@@ -13,6 +13,10 @@ export default async function JobPage({
 }) {
   const { platform, id } = await params;
 
+  console.log(`\n=== JOB PAGE RENDER ===`);
+  console.log(`URL params — platform: "${platform}", id: "${id}"`);
+  console.log(`Decoded — platform: "${decodeURIComponent(platform)}", id: "${decodeURIComponent(id)}"`);
+
   const supabase = getSupabase();
   const { data, error } = await supabase
     .from("job_search_main")
@@ -20,6 +24,9 @@ export default async function JobPage({
     .eq("source_platform", decodeURIComponent(platform))
     .eq("id", decodeURIComponent(id))
     .single();
+
+  console.log(`Query result — company: "${data?.company}", role: "${data?.role_title}", has_answers: ${!!data?.why_this_company}`);
+  console.log(`=== END JOB PAGE ===\n`);
 
   if (error || !data) {
     return (
@@ -40,5 +47,5 @@ export default async function JobPage({
     resumeText = await extractDocxText(supabase, job.tailored_resume);
   }
 
-  return <JobDetail job={job} resumeText={resumeText} />;
+  return <JobDetail key={`${job.source_platform}-${job.id}`} job={job} resumeText={resumeText} />;
 }

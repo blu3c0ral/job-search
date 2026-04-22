@@ -110,7 +110,21 @@ Current answer: "${currentAnswer}"
 
 Provide a rephrased version based on the user's request. Return ONLY the rephrased text — no explanations, no quotes, no labels. Just the answer they can copy-paste.`;
 
+  console.log("\n=== REPHRASE CHAT REQUEST ===");
+  console.log(`Job: ${job.company} - ${job.role_title} (${source_platform}/${id})`);
+  console.log(`Field: ${fieldLabels[field] ?? field}`);
+  console.log(`Current answer: ${currentAnswer}`);
+  console.log(`Model: ${modelId}`);
+  console.log(`User message: ${userMessage}`);
+  console.log(`Profile loaded: ${profile ? `${profile.length} chars` : "no"}`);
+  console.log(`Resume text: ${resumeText ? `${resumeText.length} chars` : "none"}`);
+  console.log(`System prompt: ${systemPrompt.length} chars`);
+  console.log("--- FULL SYSTEM PROMPT ---");
+  console.log(systemPrompt);
+  console.log("--- END SYSTEM PROMPT ---");
+
   const client = new Anthropic({ apiKey });
+  const start = Date.now();
 
   const response = await client.messages.create({
     model: modelId,
@@ -119,8 +133,17 @@ Provide a rephrased version based on the user's request. Return ONLY the rephras
     messages: [{ role: "user", content: userMessage }],
   });
 
+  const elapsed = Date.now() - start;
   const text =
     response.content[0].type === "text" ? response.content[0].text : "";
+
+  console.log(`\n--- RESPONSE (${elapsed}ms) ---`);
+  console.log(`Model: ${response.model}`);
+  console.log(`Input tokens: ${response.usage.input_tokens} (cache read: ${(response.usage as Record<string, number>).cache_read_input_tokens ?? 0}, cache creation: ${(response.usage as Record<string, number>).cache_creation_input_tokens ?? 0})`);
+  console.log(`Output tokens: ${response.usage.output_tokens}`);
+  console.log(`Stop reason: ${response.stop_reason}`);
+  console.log(`Response: ${text}`);
+  console.log("=== END REPHRASE CHAT ===\n");
 
   return NextResponse.json({ response: text });
 }
