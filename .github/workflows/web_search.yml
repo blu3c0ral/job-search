@@ -2,7 +2,7 @@ name: Web Job Search
 
 on:
   schedule:
-    - cron: "0 19 * * *"  # 3 PM ET daily (UTC-4)
+    - cron: "0 11 * * *"  # 6 AM EST daily (UTC-5)
   workflow_dispatch:
 
 jobs:
