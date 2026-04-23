@@ -472,9 +472,6 @@ def store_results(
             f"{eval_failed} failed ({time.monotonic() - t_eval:.1f}s)"
         )
 
-    # ── Resume tailoring for strong matches ──────────────────────────────
-    _tailor_resumes_for_rows(rows, new_jobs, profile, anthropic_client)
-
     inserted = 0
     batch_size = 50
     for i in range(0, len(rows), batch_size):
