@@ -402,6 +402,32 @@ def store_results(
         logger.info("  Nothing to insert.")
         return {"inserted": 0, "skipped": skipped}
 
+    # ── Drop staffing agencies and bad geo before processing ────────────
+    from web_job_search import load_staffing_agencies, is_acceptable_location
+    agencies = load_staffing_agencies()
+    pre_count = len(new_jobs)
+    filtered_jobs = []
+    staffing_dropped = 0
+    geo_dropped = 0
+    for j in new_jobs:
+        if j.company.lower().strip() in agencies:
+            staffing_dropped += 1
+            continue
+        if not is_acceptable_location(j.location):
+            geo_dropped += 1
+            continue
+        filtered_jobs.append(j)
+    if staffing_dropped or geo_dropped:
+        logger.info(
+            f"    Hard-filter: dropped {staffing_dropped + geo_dropped} "
+            f"(staffing={staffing_dropped}, geo={geo_dropped})"
+        )
+    new_jobs = filtered_jobs
+
+    if not new_jobs:
+        logger.info("  Nothing to insert after filtering.")
+        return {"inserted": 0, "skipped": skipped}
+
     rows = [_job_to_row(j) for j in new_jobs]
 
     # Evaluate match quality when profile is available

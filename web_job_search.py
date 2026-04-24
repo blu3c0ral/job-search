@@ -101,8 +101,33 @@ def load_profile() -> str:
     sys.exit(1)
 
 
+def load_staffing_agencies() -> set[str]:
+    """Load staffing agency names from Supabase (lowercased for matching)."""
+    rows = supabase.table("staffing_agencies").select("name").execute().data
+    return {r["name"].lower().strip() for r in rows}
+
+
+# Acceptable location patterns — jobs whose location doesn't match any of
+# these (case-insensitive) are dropped before saving.
+_ACCEPTABLE_LOCATION_PATTERNS = [
+    "new york", ", ny", "nyc",
+    "manhattan", "brooklyn", "queens", "bronx", "staten island",
+    "hoboken", "jersey city", "newark", ", nj",
+    "stamford", ", ct",
+    "remote", "anywhere", "united states", "usa",
+]
+
+
+def is_acceptable_location(location: str) -> bool:
+    """Return True if the location is in the NYC metro area or remote."""
+    if not location:
+        return True  # unknown location → let Haiku/Opus decide
+    loc_lower = location.lower()
+    return any(pat in loc_lower for pat in _ACCEPTABLE_LOCATION_PATTERNS)
+
+
 def load_search_config() -> dict:
-    """Load whitelist/blacklist titles and locations from Supabase."""
+    """Load whitelist/blacklist titles, locations, and staffing agencies from Supabase."""
     logger.info("Loading search configuration from Supabase...")
 
     rows = supabase.table("job_titles").select("title, type").execute().data
@@ -112,14 +137,17 @@ def load_search_config() -> dict:
     rows = supabase.table("location").select("location, type").execute().data
     locations = [r["location"] for r in rows if r.get("type") == "Whitelist"]
 
+    staffing_agencies = load_staffing_agencies()
+
     logger.info(
         f"  {len(whitelist_titles)} whitelist titles, {len(blacklist_titles)} blacklist titles, "
-        f"{len(locations)} whitelist locations"
+        f"{len(locations)} whitelist locations, {len(staffing_agencies)} staffing agencies"
     )
     return {
         "whitelist_titles": whitelist_titles,
         "blacklist_titles": blacklist_titles,
         "locations": locations,
+        "staffing_agencies": staffing_agencies,
     }
 
 
@@ -298,49 +326,64 @@ def pre_filter_results(
     results: list[JobSearchResult],
     existing_urls: set[str],
     blacklist_titles: list[str],
+    staffing_agencies: set[str] | None = None,
     max_age_days: int = 30,
 ) -> list[JobSearchResult]:
     """Deterministic pre-filtering — zero LLM cost.
 
     Filters:
-      1. Blacklist title keywords (intern, junior, manager, ios, etc.)
-      2. Schedule type (part-time, contract, internship, temporary)
-      3. Already in DB (any apply_option URL matches existing)
-      4. Age (posted_at > max_age_days)
-      5. Empty/short description
+      1. Staffing agency (company in staffing_agencies table)
+      2. Geo-location (not NYC metro / remote)
+      3. Blacklist title keywords (intern, junior, manager, ios, etc.)
+      4. Schedule type (part-time, contract, internship, temporary)
+      5. Already in DB (any apply_option URL matches existing)
+      6. Age (posted_at > max_age_days)
+      7. Empty/short description
     """
     filtered: list[JobSearchResult] = []
-    counts = {"blacklist": 0, "schedule": 0, "existing": 0, "stale": 0, "empty": 0}
+    counts = {"staffing": 0, "geo": 0, "blacklist": 0, "schedule": 0, "existing": 0, "stale": 0, "empty": 0}
+    agencies = staffing_agencies or set()
 
     for r in results:
         title_lower = r.title.lower()
+        company_lower = r.company.lower().strip()
 
-        # 1. Blacklist title filter
+        # 1. Staffing agency filter
+        if company_lower in agencies:
+            counts["staffing"] += 1
+            continue
+
+        # 2. Geo-location filter
+        if not is_acceptable_location(r.location):
+            counts["geo"] += 1
+            continue
+
+        # 3. Blacklist title filter
         if any(bl in title_lower for bl in blacklist_titles):
             counts["blacklist"] += 1
             continue
 
-        # 2. Schedule type filter
+        # 4. Schedule type filter
         if r.schedule_type and r.schedule_type.lower() in {
             "part-time", "contract", "internship", "temporary",
         }:
             counts["schedule"] += 1
             continue
 
-        # 3. Already in DB (check all apply_option URLs)
+        # 5. Already in DB (check all apply_option URLs)
         result_urls = {opt.get("link", "").rstrip("/") for opt in r.apply_options if opt.get("link")}
         if result_urls & existing_urls:
             counts["existing"] += 1
             continue
 
-        # 4. Age filter
+        # 6. Age filter
         if r.posted_at:
             days = _posted_at_to_days(r.posted_at)
             if days is not None and days > max_age_days:
                 counts["stale"] += 1
                 continue
 
-        # 5. Empty description
+        # 7. Empty description
         if len(r.description) < 100:
             counts["empty"] += 1
             continue
@@ -351,7 +394,8 @@ def pre_filter_results(
     if total_dropped:
         logger.info(
             f"  Pre-filter: dropped {total_dropped} "
-            f"(blacklist={counts['blacklist']}, schedule={counts['schedule']}, "
+            f"(staffing={counts['staffing']}, geo={counts['geo']}, "
+            f"blacklist={counts['blacklist']}, schedule={counts['schedule']}, "
             f"existing={counts['existing']}, stale={counts['stale']}, empty={counts['empty']})"
         )
     return filtered
@@ -587,6 +631,7 @@ def run_web_search() -> dict:
         unique_results,
         existing_urls=existing_urls,
         blacklist_titles=config["blacklist_titles"],
+        staffing_agencies=config["staffing_agencies"],
         max_age_days=30,
     )
     logger.info(f"After pre-filter: {len(filtered_results)} candidates")

@@ -40,19 +40,21 @@ logger = logging.getLogger("jd_matcher")
 # PRE-SCREENING CONSTANTS
 # ============================================================
 
-COMPANY_BLACKLIST = frozenset({
-    "synergisticit",
-    "v-soft",
-    "corevia",
-    "eliassen group",
-    "veracity software",
-    "staffing the universe",
-    "zoolatech",
-    "alignerr",
-    "agileengine",
-    "datasignify",
-    "the developer link",
-})
+_staffing_agencies_cache: frozenset[str] | None = None
+
+
+def _get_staffing_agencies() -> frozenset[str]:
+    """Load staffing agencies from DB (cached after first call)."""
+    global _staffing_agencies_cache
+    if _staffing_agencies_cache is None:
+        try:
+            db = get_supabase_client()
+            rows = db.table("staffing_agencies").select("name").execute().data
+            _staffing_agencies_cache = frozenset(r["name"].lower().strip() for r in rows)
+            logger.debug(f"Loaded {len(_staffing_agencies_cache)} staffing agencies from DB")
+        except Exception:
+            _staffing_agencies_cache = frozenset()
+    return _staffing_agencies_cache
 
 CONTRACT_SIGNALS = [
     "contract to hire",
@@ -386,7 +388,7 @@ def deterministic_pre_filter(title: str, company: str, jd_text: str) -> dict | N
     """
     company_lower = company.lower().strip()
 
-    for blacklisted in COMPANY_BLACKLIST:
+    for blacklisted in _get_staffing_agencies():
         if blacklisted in company_lower:
             return _build_prescreen_result(
                 f"Company '{company}' is a known staffing agency",
