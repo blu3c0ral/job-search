@@ -381,6 +381,24 @@ def _build_prescreen_result(reason: str, category: str) -> dict:
     }
 
 
+def _learn_staffing_agency(company: str) -> None:
+    """Add a newly-discovered staffing agency to the DB table (idempotent)."""
+    name = company.strip()
+    if not name or name.lower() in _get_staffing_agencies():
+        return
+    try:
+        db = get_supabase_client()
+        db.table("staffing_agencies").upsert(
+            {"name": name}, on_conflict="name"
+        ).execute()
+        # Bust cache so future calls in this process see the new entry
+        global _staffing_agencies_cache
+        _staffing_agencies_cache = None
+        logger.info(f"  Learned new staffing agency: {name}")
+    except Exception as exc:
+        logger.warning(f"  Failed to learn staffing agency {name!r}: {exc}")
+
+
 def deterministic_pre_filter(title: str, company: str, jd_text: str) -> dict | None:
     """Instant rejection for known-bad patterns. No API call.
 
@@ -398,6 +416,7 @@ def deterministic_pre_filter(title: str, company: str, jd_text: str) -> dict | N
     jd_lower = jd_text.lower()
     hits = sum(1 for signal in CONTRACT_SIGNALS if signal in jd_lower)
     if hits >= CONTRACT_SIGNAL_THRESHOLD:
+        _learn_staffing_agency(company)
         return _build_prescreen_result(
             f"JD contains {hits} contract/staffing signals",
             "contract_signals",
@@ -445,6 +464,9 @@ def haiku_pre_screen(
         if result.get("decision", "").upper() == "REJECT":
             reason = result.get("reason", "Haiku pre-screen rejection")
             logger.info(f"  Haiku REJECT: {company} — {title}: {reason}")
+            reason_lower = reason.lower()
+            if any(kw in reason_lower for kw in ("staffing", "contract role", "staffing agency", "recruiting")):
+                _learn_staffing_agency(company)
             return _build_prescreen_result(
                 f"Haiku: {reason}",
                 "haiku_prescreen",
@@ -573,6 +595,11 @@ def evaluate_match(
 
     match_enum = verdict_to_enum(result.get("verdict", ""))
     match_detail = {k: result[k] for k in result if k not in _EXCLUDE_FROM_DETAIL}
+
+    # Learn staffing agencies from Opus dealbreaker analysis
+    dealbreaker = (result.get("dealbreaker_triggered") or "").lower()
+    if any(kw in dealbreaker for kw in ("staffing", "contract", "recruiting agency")):
+        _learn_staffing_agency(company)
 
     out = {"match": match_enum, "match_detail": match_detail}
     for k in _NARRATIVE_KEYS:
