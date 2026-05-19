@@ -181,7 +181,7 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
                 key={`${job.source_platform}-${job.id}`}
                 className="border-b border-border hover:bg-blue-50 cursor-pointer transition-colors"
                 onClick={() => {
-                  window.location.href = `/job/${encodeURIComponent(job.source_platform)}/${encodeURIComponent(job.id)}`;
+                  window.open(`/job/${encodeURIComponent(job.source_platform)}/${encodeURIComponent(job.id)}`, "_blank");
                 }}
               >
                 <td className="px-3 py-2 font-medium">{job.company}</td>
