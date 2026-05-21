@@ -42,7 +42,7 @@ const MATCH_ORDER = [
 ];
 
 export function JobTable({ jobs }: { jobs: TableJob[] }) {
-  const [matchFilter, setMatchFilter] = useState<string>("");
+  const [matchFilter, setMatchFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date_found");
@@ -59,7 +59,7 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
 
   const filtered = useMemo(() => {
     let result = jobs;
-    if (matchFilter) result = result.filter((j) => j.match === matchFilter);
+    if (matchFilter.size > 0) result = result.filter((j) => matchFilter.has(j.match ?? ""));
     if (statusFilter) result = result.filter((j) => j.status === statusFilter);
     if (search) {
       const q = search.toLowerCase();
@@ -111,18 +111,29 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
           onChange={(e) => setSearch(e.target.value)}
           className="border border-border rounded-md px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-accent"
         />
-        <select
-          value={matchFilter}
-          onChange={(e) => setMatchFilter(e.target.value)}
-          className="border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          <option value="">All matches</option>
-          {matchValues.map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-wrap gap-1.5">
+          {matchValues.map((v) => {
+            const active = matchFilter.has(v);
+            return (
+              <button
+                key={v}
+                onClick={() =>
+                  setMatchFilter((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(v)) next.delete(v);
+                    else next.add(v);
+                    return next;
+                  })
+                }
+                className={`px-2.5 py-0.5 rounded-full text-xs font-medium border transition-opacity ${
+                  MATCH_COLORS[v] ?? "bg-gray-100 text-gray-600"
+                } ${active ? "opacity-100 ring-2 ring-offset-1 ring-gray-400" : "opacity-40 hover:opacity-70"}`}
+              >
+                {v}
+              </button>
+            );
+          })}
+        </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -135,7 +146,13 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
             </option>
           ))}
         </select>
-        <span className="text-sm text-gray-500 ml-auto">
+        <a
+          href="/job/add"
+          className="ml-auto px-3 py-1.5 bg-accent text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
+        >
+          + Add Job
+        </a>
+        <span className="text-sm text-gray-500">
           {filtered.length} of {jobs.length} jobs
         </span>
       </div>
