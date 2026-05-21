@@ -14,6 +14,7 @@ type TableJob = Pick<
   | "match"
   | "status"
   | "date_found"
+  | "applied_date"
   | "tailored_resume"
   | "link"
 >;
@@ -187,8 +188,9 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
                 className="px-3 py-2 font-medium cursor-pointer select-none"
                 onClick={() => toggleSort("date_found")}
               >
-                Date{sortIndicator("date_found")}
+                Found{sortIndicator("date_found")}
               </th>
+              <th className="px-3 py-2 font-medium">Applied</th>
               <th className="px-3 py-2 font-medium text-center">Resume</th>
             </tr>
           </thead>
@@ -223,6 +225,9 @@ export function JobTable({ jobs }: { jobs: TableJob[] }) {
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   {job.date_found}
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                  {job.applied_date ?? ""}
                 </td>
                 <td className="px-3 py-2 text-center">
                   {job.tailored_resume ? "\u2705" : ""}

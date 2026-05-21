@@ -75,8 +75,9 @@ export function JobDetail({ job, resumeText }: { job: Job; resumeText: string })
           <h1 className="text-2xl font-bold">{job.role_title}</h1>
           <p className="text-lg text-gray-600">{job.company}</p>
           <p className="text-sm text-gray-400">
-            {job.location} &middot; {job.date_found} &middot;{" "}
-            {job.source_platform}
+            {job.location} &middot; Found: {job.date_found}
+            {job.applied_date && <> &middot; Applied: {job.applied_date}</>}
+            {" "}&middot; {job.source_platform}
           </p>
           {job.compensation && job.compensation !== "Not listed" && (
             <p className="text-sm text-gray-500 mt-1">{job.compensation}</p>

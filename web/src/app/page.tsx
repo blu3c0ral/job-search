@@ -9,7 +9,7 @@ export default async function Home() {
   const { data, error } = await supabase
     .from("job_search_main")
     .select(
-      "id, source_platform, role_title, company, location, compensation, match, status, date_found, tailored_resume, link"
+      "id, source_platform, role_title, company, location, compensation, match, status, date_found, applied_date, tailored_resume, link"
     )
     .order("date_found", { ascending: false });
 
@@ -32,6 +32,7 @@ export default async function Home() {
     | "match"
     | "status"
     | "date_found"
+    | "applied_date"
     | "tailored_resume"
     | "link"
   >[];
