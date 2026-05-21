@@ -40,6 +40,7 @@ export interface Job {
   why_this_company: string | null;
   why_this_role: string | null;
   something_i_built_and_proud_of: string | null;
+  applied_date: string | null;
   tailored_resume: string | null;
   // Can be TailoringChange[] (flat array) or TailoringData ({changes, gaps})
   tailoring_changes: TailoringChange[] | TailoringData | null;
