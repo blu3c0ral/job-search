@@ -29,6 +29,11 @@ export function EditJobForm({ job }: { job: Job }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadedPath, setUploadedPath] = useState<string | null>(job.tailored_resume ?? null);
+
   const showAppliedDate = APPLIED_STATUSES.has(status);
   const jdChanged = jobDescription.trim() !== (job.job_description ?? "").trim();
 
@@ -78,6 +83,30 @@ export function EditJobForm({ job }: { job: Job }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error.");
       setSubmitting(false);
+    }
+  }
+
+  async function handleUpload() {
+    if (!resumeFile) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", resumeFile);
+      fd.append("id", job.id);
+      fd.append("source_platform", job.source_platform);
+      const res = await fetch("/api/upload-resume", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        setUploadError(data.error ?? "Upload failed.");
+      } else {
+        setUploadedPath(data.path);
+        setResumeFile(null);
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Unexpected error.");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -200,6 +229,53 @@ export function EditJobForm({ job }: { job: Job }) {
               className={inputClass}
             />
           </Field>
+        )}
+      </div>
+
+      {/* Resume upload */}
+      <div className="border border-border rounded-lg p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium text-gray-700">Resume (.docx)</label>
+          {uploadedPath && (
+            <a
+              href={`/api/download-resume?path=${encodeURIComponent(uploadedPath)}`}
+              className="text-xs text-accent hover:underline"
+            >
+              Download current
+            </a>
+          )}
+        </div>
+        {uploadedPath && !resumeFile && (
+          <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-1.5">
+            Resume on file: {uploadedPath.split("/").pop()}
+          </p>
+        )}
+        <div className="flex items-center gap-3">
+          <input
+            type="file"
+            accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(e) => {
+              setResumeFile(e.target.files?.[0] ?? null);
+              setUploadError(null);
+            }}
+            className="text-sm text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-border file:text-xs file:text-gray-700 file:bg-muted hover:file:bg-gray-200 file:transition-colors"
+          />
+          {resumeFile && (
+            <button
+              type="button"
+              onClick={handleUpload}
+              disabled={uploading}
+              className="px-4 py-1.5 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-60"
+            >
+              {uploading ? "Uploading..." : "Upload"}
+            </button>
+          )}
+        </div>
+        {uploadError && (
+          <p className="text-xs text-red-600">{uploadError}</p>
+        )}
+        {uploadedPath && resumeFile && (
+          <p className="text-xs text-amber-700">Uploading will replace the existing resume.</p>
         )}
       </div>
 
